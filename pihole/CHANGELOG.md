@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0
+
+- Move native Pi-hole admin / API webserver from port `8080` to `8088`
+
 ## 1.5.0
 
 - Add DNS traffic panel with 24-hour chart, live query log, and top clients

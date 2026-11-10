@@ -6,4 +6,3 @@ labels:
   org.opencontainers.image.description: Network-wide ad blocking DNS for Home Assistant
   org.opencontainers.image.source: https://github.com/chancemcox/HomeassistantPIhole
   org.opencontainers.image.licenses: MIT
-args: {}
