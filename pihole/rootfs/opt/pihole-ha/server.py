@@ -525,8 +525,13 @@ def _supervisor_api_bases() -> list[str]:
 def _supervisor_get_json(path: str) -> Any | None:
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
     if not token:
+        log.warning("SUPERVISOR_TOKEN missing; cannot identify peer DNS add-ons")
         return None
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Supervisor-Token": token,
+        "Accept": "application/json",
+    }
     errors: list[str] = []
     for base in _supervisor_api_bases():
         url = f"{base.rstrip('/')}/{path.lstrip('/')}"
@@ -534,19 +539,76 @@ def _supervisor_get_json(path: str) -> Any | None:
         try:
             with urllib.request.urlopen(request, timeout=3) as response:
                 return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")[:200]
+            except Exception:  # noqa: BLE001
+                body = ""
+            errors.append(f"{url}: HTTP {exc.code} {body}")
+            # 401/403 mean role/token issue — no point trying other bases the same way.
+            if exc.code in {401, 403}:
+                break
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{url}: {exc}")
             continue
     if errors:
-        log.debug("Supervisor GET %s failed: %s", path, "; ".join(errors))
+        log.warning("Supervisor GET %s failed: %s", path, "; ".join(errors))
     return None
+
+
+def _probe_localhost_dns_ui() -> list[dict[str, Any]]:
+    """Best-effort fingerprint of common DNS admin UIs on localhost."""
+    probes = (
+        ("AdGuard Home", ("http://127.0.0.1:3000/", "http://127.0.0.1:80/")),
+        ("Technitium DNS", ("http://127.0.0.1:5380/",)),
+    )
+    found: list[dict[str, Any]] = []
+    for label, urls in probes:
+        for url in urls:
+            request = urllib.request.Request(url, method="GET", headers={"Accept": "text/html"})
+            try:
+                with urllib.request.urlopen(request, timeout=1.5) as response:
+                    body = response.read(4096).decode("utf-8", errors="replace").lower()
+                    server = (response.headers.get("Server") or "").lower()
+            except Exception:  # noqa: BLE001
+                continue
+            hit = False
+            if "adguard" in label.lower() and (
+                "adguard" in body or "adguard" in server or "control.html" in body
+            ):
+                hit = True
+            if "technitium" in label.lower() and "technitium" in body:
+                hit = True
+            if hit:
+                found.append(
+                    {
+                        "proto": "probe",
+                        "pid": None,
+                        "comm": label,
+                        "cmdline": url,
+                        "detail": f"{label} admin UI responds at {url}",
+                    }
+                )
+                break
+    return found
+
+
+def _is_known_dns_addon(slug: str, name: str) -> bool:
+    blob = f"{slug} {name}".lower()
+    if slug.lower() in _KNOWN_DNS_SLUGS:
+        return True
+    return any(
+        key in blob
+        for key in ("adguard", "dnsmasq", "unbound", "blocky", "technitium", "nextdns", "coredns")
+    )
 
 
 def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
     """Ask Home Assistant Supervisor which other add-ons may own DNS port 53."""
     payload = _supervisor_get_json("/addons")
     if not isinstance(payload, dict):
-        return []
+        return _probe_localhost_dns_ui()
 
     data = payload.get("data") if isinstance(payload, dict) else None
     addons = []
@@ -555,7 +617,7 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
     elif isinstance(data, list):
         addons = data
     if not isinstance(addons, list):
-        return []
+        return _probe_localhost_dns_ui()
 
     conflicts: list[dict[str, Any]] = []
     for addon in addons:
@@ -569,17 +631,15 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
         if slug_l == "pihole" or slug_l.endswith("_pihole"):
             continue
 
-        known = slug_l in _KNOWN_DNS_SLUGS or any(
-            key in slug_l for key in ("adguard", "dnsmasq", "unbound", "blocky", "technitium")
-        )
+        known = _is_known_dns_addon(slug, name)
         if state and state not in {"started", "running"}:
             # Still flag known DNS add-ons even when stopped.
             if not known:
                 continue
 
         network = addon.get("network") or addon.get("ports") or {}
-        # List endpoint often omits ports — fetch detail for likely DNS add-ons.
-        if not network and (known or state in {"started", "running"}):
+        # List endpoint omits ports — fetch detail for DNS-like add-ons.
+        if not network and known:
             detail_payload = _supervisor_get_json(f"/addons/{slug}/info")
             if isinstance(detail_payload, dict):
                 detail_data = detail_payload.get("data") or detail_payload
@@ -601,11 +661,14 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
         # Prefer running DNS add-ons; mention stopped known ones as secondary.
         if state and state not in {"started", "running"} and not claims_53:
             continue
-        detail = f"Home Assistant add-on '{name}' (slug={slug}, state={state or 'unknown'})"
+        action = "Stop it under Settings → Add-ons, then restart Pi-hole"
+        detail = (
+            f"Home Assistant add-on '{name}' (slug={slug}, state={state or 'unknown'})"
+        )
         if claims_53:
-            detail += f" publishes host port {port}"
+            detail += f" publishes host port {port}. {action}"
         elif known:
-            detail += " is a known DNS service that typically binds port 53"
+            detail += f" is a DNS add-on that typically binds port {port}. {action}"
         conflicts.append(
             {
                 "proto": "addon",
@@ -615,6 +678,9 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
                 "detail": detail,
             }
         )
+
+    if not conflicts:
+        conflicts.extend(_probe_localhost_dns_ui())
     return conflicts
 
 
@@ -660,9 +726,9 @@ def _humanize_port_owner_summary(
             # AdGuard Home on HA commonly binds 127.0.0.1:53 and [::1]:53.
             addr_list = ", ".join(f"{a}:{port}" for a in addresses)
             parts.append(
-                f"a localhost DNS service on {addr_list} "
-                "(often AdGuard Home, dnsmasq, or systemd-resolved — "
-                "stop that add-on/service, then restart Pi-hole)"
+                f"localhost DNS on {addr_list} — usually AdGuard Home. "
+                "Open Settings → Add-ons, stop AdGuard (or another DNS add-on), "
+                "then restart Pi-hole"
             )
         elif addresses:
             parts.append(

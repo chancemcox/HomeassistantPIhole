@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.10.5"
+version: "1.10.6"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
@@ -19,7 +19,9 @@ host_network: true
 privileged:
   - NET_ADMIN
   - NET_RAW
+# manager role is required to GET /addons and name which peer owns port 53.
 hassio_api: true
+hassio_role: manager
 ports:
   53/tcp: 53
   53/udp: 53
