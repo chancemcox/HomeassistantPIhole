@@ -13,6 +13,7 @@ const els = {
   topList: document.getElementById("top-list"),
   dnsIps: document.getElementById("dns-ips"),
   dnsPortWarning: document.getElementById("dns-port-warning"),
+  blockingError: document.getElementById("blocking-error"),
   adminUrls: document.getElementById("admin-urls"),
   dnsExamples: document.getElementById("dns-examples"),
   versionLine: document.getElementById("version-line"),
@@ -63,11 +64,35 @@ async function api(path, options = {}) {
     data = { raw: text };
   }
   if (!response.ok) {
-    const message = data?.error?.message || data?.error || data?.raw || response.statusText;
+    const err = data?.error;
+    let message =
+      (typeof err === "object" && err !== null ? err.message : null) ||
+      (typeof err === "string" ? err : null) ||
+      data?.raw ||
+      response.statusText;
+    const hint =
+      (typeof err === "object" && err !== null && err.hint) ||
+      data?.owner_summary ||
+      data?.dns_port_owner_summary ||
+      "";
+    if (hint && !String(message).includes(String(hint))) {
+      message = `${message}. ${hint}`;
+    }
     console.error("[pihole-ui] request failed", url, response.status, message);
     throw new Error(message);
   }
   return data;
+}
+
+function showBlockingError(text) {
+  if (!els.blockingError) return;
+  if (!text) {
+    els.blockingError.hidden = true;
+    els.blockingError.textContent = "";
+    return;
+  }
+  els.blockingError.hidden = false;
+  els.blockingError.textContent = text;
 }
 
 function setBlockingBadge(blocking) {
@@ -185,10 +210,18 @@ async function refreshSetup() {
 
   if (els.dnsPortWarning) {
     if (data.dns_port_busy) {
+      const owner =
+        data.dns_port_owner_summary ||
+        (Array.isArray(data.dns_port_owners) && data.dns_port_owners.length
+          ? data.dns_port_owners.map((o) => o.detail || o.comm || o.cmdline).filter(Boolean).join("; ")
+          : "");
       els.dnsPortWarning.hidden = false;
       els.dnsPortWarning.textContent =
-        `Pi-hole DNS is not answering on port ${dnsPort} (${data.dns_port_detail || "no response"}). ` +
-        "Another service likely owns port 53 (AdGuard, systemd-resolved, etc.). Free port 53 and restart Pi-hole.";
+        `Pi-hole DNS is not answering on port ${dnsPort}. ` +
+        (owner
+          ? `Using the port: ${owner}. `
+          : "Another service likely owns port 53. ") +
+        "Free that port and restart Pi-hole before Enable blocking can work.";
     } else {
       els.dnsPortWarning.hidden = true;
       els.dnsPortWarning.textContent = "";
@@ -408,13 +441,17 @@ async function refreshPresets() {
 }
 
 async function setBlocking(blocking, timer) {
+  showBlockingError("");
   try {
     const body = { blocking };
     if (timer !== undefined) body.timer = timer;
     await api("/api/blocking", { method: "POST", body: JSON.stringify(body) });
+    showBlockingError("");
     await refreshOverview();
   } catch (error) {
-    showLog(`Blocking change failed: ${error.message}`);
+    const message = `Blocking change failed: ${error.message}`;
+    showBlockingError(message);
+    showLog(message);
   }
 }
 

@@ -220,12 +220,77 @@ elif command -v netstat >/dev/null 2>&1; then
 fi
 
 # Port 53 conflict is a common HA install failure mode (AdGuard, systemd-resolved,
-# another DNS container, or the host's own stub resolver).
+# another DNS container, or the host's own stub resolver). Report the owner when possible.
 if command -v ss >/dev/null 2>&1; then
   if ss -lntu 2>/dev/null | grep -Eq ':53\s'; then
     log_error "Port 53 is already in use on this host — Pi-hole DNS cannot start"
-    log_error "Stop the other DNS service (AdGuard, systemd-resolved, another Pi-hole, etc.), then restart this add-on"
-    ss -lntup 2>/dev/null | grep -E ':53\s' | while read -r line; do log_error "  ${line}"; done || true
+    log_error "Stop the other DNS service, then restart this add-on"
+    if ss -lntup 2>/dev/null | grep -Eq ':53\s'; then
+      ss -lntup 2>/dev/null | grep -E ':53\s' | while read -r line; do log_error "  ss: ${line}"; done || true
+    else
+      log_error "  ss could not name the process (likely outside this PID namespace)"
+    fi
+    # Best-effort inode → pid/cmdline mapping for listeners we can see.
+    python3 - <<'PY' 2>/dev/null | while read -r line; do log_error "  ${line}"; done || true
+from pathlib import Path
+import os
+port = 53
+hex_port = f"{port:04X}"
+inode_pids = {}
+for entry in Path("/proc").iterdir():
+    if not entry.name.isdigit():
+        continue
+    fd_dir = entry / "fd"
+    try:
+        for fd in fd_dir.iterdir():
+            try:
+                target = os.readlink(fd)
+            except OSError:
+                continue
+            if target.startswith("socket:["):
+                try:
+                    inode_pids.setdefault(int(target[8:-1]), []).append(int(entry.name))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+found = False
+for table in ("udp", "tcp", "udp6", "tcp6"):
+    path = Path(f"/proc/net/{table}")
+    try:
+        lines = path.read_text().splitlines()[1:]
+    except OSError:
+        continue
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 10:
+            continue
+        local = parts[1]
+        if not local.upper().endswith(":" + hex_port):
+            continue
+        if table.startswith("tcp") and parts[3] != "0A":
+            continue
+        inode = int(parts[9])
+        proto = table.replace("6", "").upper()
+        pids = inode_pids.get(inode) or []
+        if not pids:
+            print(f"proc: {proto} inode={inode} (process not visible here)")
+            found = True
+            continue
+        for pid in pids:
+            try:
+                comm = (Path(f"/proc/{pid}/comm").read_text().strip())
+            except OSError:
+                comm = "?"
+            try:
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace").strip()[:160]
+            except OSError:
+                cmd = ""
+            print(f"proc: {proto} pid={pid} {comm} {cmd}".strip())
+            found = True
+if not found:
+    print("proc: no listeners mapped for port 53")
+PY
   else
     log_info "Port 53 appears free for Pi-hole DNS"
   fi

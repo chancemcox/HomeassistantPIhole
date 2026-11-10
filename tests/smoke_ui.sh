@@ -49,7 +49,17 @@ class FakePiHole(BaseHTTPRequestHandler):
             store["domains"].append({"domain": domain, "kind": kind, "type": "deny"})
             return self._json(201, {"domains": [store["domains"][-1]]})
         if self.path == "/api/dns/blocking":
-            return self._json(200, {"blocking": True, "timer": None})
+            # Simulate FTL when host port 53 is taken (real user failure mode).
+            return self._json(
+                500,
+                {
+                    "error": {
+                        "key": "dns_failure",
+                        "message": "DNS resolver is not running",
+                        "hint": None,
+                    }
+                },
+            )
         return self._json(200, {"ok": True})
 
     def do_GET(self):
@@ -94,6 +104,33 @@ class FakeSupervisor(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/addons":
+            body = json.dumps(
+                {
+                    "data": {
+                        "addons": [
+                            {
+                                "slug": "a0d7b954_adguard",
+                                "name": "AdGuard Home",
+                                "state": "started",
+                                "network": {"53/udp": 53, "53/tcp": 53},
+                            },
+                            {
+                                "slug": "pihole",
+                                "name": "Pi-hole",
+                                "state": "started",
+                                "network": {"53/udp": 53},
+                            },
+                        ]
+                    }
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self.send_response(404)
         self.end_headers()
 
@@ -127,6 +164,8 @@ os.environ.update(
     PIHOLE_HA_UI_PORT="18099",
     PIHOLE_HA_LOG_LEVEL="warning",
     PIHOLE_HA_BLOCK_HULU_ADS="false",
+    SUPERVISOR_TOKEN="test-token",
+    SUPERVISOR_API_BASE="http://127.0.0.1:18081",
 )
 
 spec = importlib.util.spec_from_file_location(
@@ -174,6 +213,7 @@ assert 'class="brand">Pi-hole</h1>' in html or ">Pi-hole<" in html, html[:800]
 assert 'id="traffic-title"' in html, "traffic panel missing from page"
 assert 'id="setup-title"' in html, "DNS setup panel missing from page"
 assert 'id="dns-ips"' in html and 'id="admin-urls"' in html, "port chips missing from page"
+assert 'id="blocking-error"' in html, "blocking error banner missing from page"
 assert 'src="static/app.js' in html, html[:500]
 assert 'href="static/styles.css' in html, html[:500]
 assert 'href="/static/' not in html and 'src="/static/' not in html, "absolute /static paths break HA Ingress"
@@ -204,11 +244,34 @@ with urllib.request.urlopen(req, timeout=10) as response:
     assert data.get("ok") is True, data
     assert len(data.get("added", [])) >= 1, data
 
+# Enable blocking must report who owns port 53 when FTL returns dns_failure.
+block_req = urllib.request.Request(
+    "http://127.0.0.1:18099/api/blocking",
+    data=b'{"blocking":true}',
+    method="POST",
+    headers={"Content-Type": "application/json"},
+)
+try:
+    urllib.request.urlopen(block_req, timeout=10)
+    raise AssertionError("expected blocking POST to fail with dns_failure")
+except urllib.error.HTTPError as exc:
+    assert exc.code == 500, exc.code
+    body = json.loads(exc.read().decode())
+    err = body.get("error") or {}
+    assert err.get("key") == "dns_failure", body
+    assert "Port 53" in str(err.get("hint") or ""), body
+    assert "AdGuard Home" in str(err.get("hint") or "") or "AdGuard Home" in str(
+        body.get("owner_summary") or ""
+    ), body
+    assert body.get("owner_summary"), body
+    print("blocking dns_failure reports port owner OK")
+
 # Config contract: Ingress must use the fixed unique port (not 8099).
 import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
+assert cfg.get("version") == "1.10.4", cfg.get("version")
 assert cfg.get("ports", {}).get("53/tcp") == 53
 assert cfg.get("ports", {}).get("8088/tcp") == 8088
 print("config ingress_port=8189 OK")

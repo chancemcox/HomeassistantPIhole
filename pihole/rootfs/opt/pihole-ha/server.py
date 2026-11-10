@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
+import subprocess
 import threading
 import time
 import traceback
@@ -61,6 +63,22 @@ ADMIN_PORT = int(os.environ.get("PIHOLE_ADMIN_PORT", str(_admin_port_from_api_ba
 
 _session_lock = threading.Lock()
 _session: dict[str, Any] = {"sid": None, "expires": 0.0}
+
+# Common Home Assistant DNS add-ons that collide on host port 53.
+_KNOWN_DNS_SLUGS = {
+    "adguard",
+    "adguard-home",
+    "core_adguard",
+    "a0d7b954_adguard",
+    "dnsmasq",
+    "core_dnsmasq",
+    "unbound",
+    "core_unbound",
+    "technitium",
+    "coredns",
+    "blocky",
+    "nextdns",
+}
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL_NAME, logging.INFO),
@@ -264,23 +282,358 @@ def apply_preset(preset_id: str) -> dict[str, Any]:
     }
 
 
+def _read_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    text = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+    return text[:200]
+
+
+def _read_comm(pid: int) -> str:
+    try:
+        return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _inode_to_pids() -> dict[int, list[int]]:
+    mapping: dict[int, list[int]] = {}
+    proc = Path("/proc")
+    try:
+        entries = list(proc.iterdir())
+    except OSError:
+        return mapping
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        fd_dir = entry / "fd"
+        try:
+            for fd in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if not target.startswith("socket:["):
+                    continue
+                try:
+                    inode = int(target[8:-1])
+                except ValueError:
+                    continue
+                mapping.setdefault(inode, []).append(int(entry.name))
+        except OSError:
+            continue
+    return mapping
+
+
+def _parse_proc_net_listeners(port: int) -> list[dict[str, Any]]:
+    """Find listeners on <port> via /proc/net/{tcp,udp,tcp6,udp6} + socket inodes."""
+    hex_port = f"{port:04X}"
+    owners: list[dict[str, Any]] = []
+    seen: set[tuple[str, int | None, str]] = set()
+    inode_map = _inode_to_pids()
+
+    for table in ("udp", "tcp", "udp6", "tcp6"):
+        path = Path(f"/proc/net/{table}")
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+        except OSError:
+            continue
+        proto = table.replace("6", "").upper()
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 10:
+                continue
+            local = parts[1]
+            state = parts[3]
+            # UDP has no listen state equivalent; TCP listen is 0A.
+            if table.startswith("tcp") and state != "0A":
+                continue
+            if ":" not in local:
+                continue
+            local_port = local.rsplit(":", 1)[-1].upper()
+            if local_port != hex_port:
+                continue
+            try:
+                inode = int(parts[9])
+            except ValueError:
+                inode = 0
+            pids = inode_map.get(inode) or []
+            if not pids:
+                key = (proto, None, f"inode={inode}")
+                if key not in seen:
+                    seen.add(key)
+                    owners.append(
+                        {
+                            "proto": proto,
+                            "pid": None,
+                            "comm": "",
+                            "cmdline": "",
+                            "detail": f"{proto} listener inode={inode} (process not visible in this namespace)",
+                        }
+                    )
+                continue
+            for pid in pids:
+                comm = _read_comm(pid)
+                cmdline = _read_cmdline(pid)
+                key = (proto, pid, comm)
+                if key in seen:
+                    continue
+                seen.add(key)
+                owners.append(
+                    {
+                        "proto": proto,
+                        "pid": pid,
+                        "comm": comm,
+                        "cmdline": cmdline,
+                        "detail": f"{proto} pid={pid} {comm or 'unknown'}{(' — ' + cmdline) if cmdline else ''}".strip(),
+                    }
+                )
+    return owners
+
+
+def _parse_ss_listeners(port: int) -> list[dict[str, Any]]:
+    if not __import__("shutil").which("ss"):
+        return []
+    owners: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    # -p needs privileges; still useful when the peer is in this PID namespace.
+    for args in (["ss", "-lntup"], ["ss", "-lnup"], ["ss", "-lntp"], ["ss", "-lntu"]):
+        try:
+            completed = subprocess.run(
+                args,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.debug("ss failed (%s): %s", args, exc)
+            continue
+        for line in completed.stdout.splitlines():
+            if not re.search(rf":{port}\b", line):
+                continue
+            cleaned = " ".join(line.split())
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            pid = None
+            comm = ""
+            match = re.search(r'pid=(\d+).*?users:\(\("([^"]+)"', cleaned)
+            if not match:
+                match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', cleaned)
+                if match:
+                    comm = match.group(1)
+                    pid = int(match.group(2))
+            else:
+                pid = int(match.group(1))
+                comm = match.group(2)
+            owners.append(
+                {
+                    "proto": "TCP" if "tcp" in cleaned.lower() else "UDP",
+                    "pid": pid,
+                    "comm": comm,
+                    "cmdline": _read_cmdline(pid) if pid else "",
+                    "detail": cleaned,
+                }
+            )
+        if owners:
+            break
+    return owners
+
+
+def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
+    """Ask Home Assistant Supervisor which other add-ons may own DNS port 53."""
+    token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
+    if not token:
+        return []
+    base = os.environ.get("SUPERVISOR_API_BASE", "http://supervisor").rstrip("/")
+    request = urllib.request.Request(
+        f"{base}/addons",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Supervisor add-ons lookup failed: %s", exc)
+        return []
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    addons = []
+    if isinstance(data, dict):
+        addons = data.get("addons") or data.get("installed") or []
+    elif isinstance(data, list):
+        addons = data
+    if not isinstance(addons, list):
+        return []
+
+    conflicts: list[dict[str, Any]] = []
+    for addon in addons:
+        if not isinstance(addon, dict):
+            continue
+        slug = str(addon.get("slug") or "")
+        name = str(addon.get("name") or slug or "unknown add-on")
+        state = str(addon.get("state") or "")
+        if state and state not in {"started", "running"}:
+            # Still flag known DNS add-ons even when stopped — they explain historical binds.
+            if slug.lower() not in _KNOWN_DNS_SLUGS and not any(
+                key in slug.lower() for key in ("adguard", "dnsmasq", "unbound", "pihole")
+            ):
+                continue
+        slug_l = slug.lower()
+        # Skip ourselves (slug is "pihole" or a namespaced "*_pihole").
+        if slug_l == "pihole" or slug_l.endswith("_pihole"):
+            continue
+
+        network = addon.get("network") or addon.get("ports") or {}
+        claims_53 = False
+        if isinstance(network, dict):
+            for key, value in network.items():
+                key_l = str(key).lower()
+                if key_l.startswith("53/") or key_l == "53":
+                    claims_53 = True
+                if value in {53, "53", port, str(port)}:
+                    claims_53 = True
+        known = slug_l in _KNOWN_DNS_SLUGS or any(
+            key in slug_l for key in ("adguard", "dnsmasq", "unbound", "blocky", "technitium")
+        )
+        if not claims_53 and not known:
+            continue
+        detail = f"Home Assistant add-on '{name}' (slug={slug}, state={state or 'unknown'})"
+        if claims_53:
+            detail += f" publishes host port {port}"
+        elif known:
+            detail += " is a known DNS service that typically binds port 53"
+        conflicts.append(
+            {
+                "proto": "addon",
+                "pid": None,
+                "comm": slug,
+                "cmdline": name,
+                "detail": detail,
+            }
+        )
+    return conflicts
+
+
+def describe_port_owners(port: int = DNS_PORT) -> dict[str, Any]:
+    """Identify what is using a host port (process list + Supervisor add-ons)."""
+    owners = _parse_ss_listeners(port)
+    if not owners:
+        owners = _parse_proc_net_listeners(port)
+    addon_conflicts = _supervisor_dns_conflicts(port)
+
+    # Prefer named processes; keep addon hints even when process list is empty.
+    details = [o.get("detail") for o in owners if o.get("detail")]
+    for conflict in addon_conflicts:
+        if conflict.get("detail") and conflict["detail"] not in details:
+            owners.append(conflict)
+            details.append(conflict["detail"])
+
+    summary = "; ".join(details) if details else (
+        f"port {port} appears busy but the owning process is not visible from this container "
+        "(common with host services outside the add-on PID namespace — check AdGuard, "
+        "dnsmasq, systemd-resolved, or another DNS add-on)"
+    )
+    return {"port": port, "owners": owners, "summary": summary}
+
+
 def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
-    """Probe whether anything answers DNS on 127.0.0.1:<port> (Pi-hole should)."""
+    """Probe DNS on 127.0.0.1:<port> and report who owns the port when it fails."""
     # Minimal DNS query (transaction 0xaaaa, A for ".")
     query = b"\xaa\xaa\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01"
+    ownership = describe_port_owners(port)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(1.0)
             sock.sendto(query, ("127.0.0.1", port))
             sock.recvfrom(512)
-        return {"port": port, "busy": False, "detail": "DNS responding on 127.0.0.1"}
+        # Something answered — treat as OK unless we can prove it is not pihole-FTL.
+        foreign = [
+            o
+            for o in ownership["owners"]
+            if o.get("comm")
+            and "pihole" not in str(o.get("comm", "")).lower()
+            and "ftl" not in str(o.get("comm", "")).lower()
+            and o.get("proto") != "addon"
+        ]
+        if foreign:
+            detail = (
+                f"DNS answers on 127.0.0.1:{port}, but another process also owns the port: "
+                + ownership["summary"]
+            )
+            log.warning("%s", detail)
+            return {
+                "port": port,
+                "busy": True,
+                "detail": detail,
+                "owners": ownership["owners"],
+                "owner_summary": ownership["summary"],
+            }
+        return {
+            "port": port,
+            "busy": False,
+            "detail": "DNS responding on 127.0.0.1",
+            "owners": ownership["owners"],
+            "owner_summary": ownership["summary"],
+        }
     except OSError as exc:
-        log.warning("DNS port %s is not answering on 127.0.0.1: %s", port, exc)
+        detail = (
+            f"no DNS response on 127.0.0.1:{port} ({exc}). "
+            f"Port {port} owner: {ownership['summary']}"
+        )
+        log.warning("%s", detail)
         return {
             "port": port,
             "busy": True,
-            "detail": f"no DNS response on 127.0.0.1:{port} ({exc})",
+            "detail": detail,
+            "owners": ownership["owners"],
+            "owner_summary": ownership["summary"],
         }
+
+
+def enrich_dns_failure(result: Any, port: int = DNS_PORT) -> Any:
+    """Attach port-owner context when Pi-hole reports DNS is down."""
+    ownership = describe_port_owners(port)
+    owner_summary = ownership["summary"]
+    hint = f"Port {port} is in use by: {owner_summary}"
+
+    if not isinstance(result, dict):
+        return {
+            "error": {
+                "key": "dns_failure",
+                "message": str(result) if result is not None else "DNS resolver is not running",
+                "hint": hint,
+            },
+            "port": port,
+            "owners": ownership["owners"],
+            "owner_summary": owner_summary,
+        }
+
+    enriched = dict(result)
+    err = enriched.get("error")
+    if isinstance(err, dict):
+        err = dict(err)
+        message = str(err.get("message") or "DNS resolver is not running")
+        existing_hint = err.get("hint")
+        err["message"] = message
+        err["hint"] = f"{existing_hint}; {hint}" if existing_hint else hint
+        enriched["error"] = err
+    elif err:
+        enriched["error"] = {"message": str(err), "hint": hint}
+    else:
+        enriched["error"] = {
+            "key": "dns_failure",
+            "message": "DNS resolver is not running",
+            "hint": hint,
+        }
+    enriched["port"] = port
+    enriched["owners"] = ownership["owners"]
+    enriched["owner_summary"] = owner_summary
+    return enriched
 
 
 def detect_host_ips() -> list[str]:
@@ -434,6 +787,8 @@ class Handler(BaseHTTPRequestHandler):
                     "dns_port": DNS_PORT,
                     "dns_port_busy": port_status["busy"],
                     "dns_port_detail": port_status["detail"],
+                    "dns_port_owners": port_status.get("owners") or [],
+                    "dns_port_owner_summary": port_status.get("owner_summary") or "",
                     "admin_port": ADMIN_PORT,
                     "admin_urls": [f"http://{ip}:{ADMIN_PORT}/admin" for ip in ips],
                     "example_ip": example_ip,
@@ -500,6 +855,28 @@ class Handler(BaseHTTPRequestHandler):
                     return
             log.info("Setting blocking=%s timer=%s", payload.get("blocking"), payload.get("timer"))
             status, result = authed_request("POST", "/api/dns/blocking", payload)
+            if status >= 400:
+                err_key = ""
+                err_msg = ""
+                if isinstance(result, dict):
+                    err = result.get("error") or {}
+                    if isinstance(err, dict):
+                        err_key = str(err.get("key") or "")
+                        err_msg = str(err.get("message") or "")
+                    else:
+                        err_msg = str(err)
+                dns_down = (
+                    err_key == "dns_failure"
+                    or "dns resolver is not running" in err_msg.lower()
+                    or "dns" in err_msg.lower() and "not running" in err_msg.lower()
+                )
+                if dns_down or dns_port_status(DNS_PORT)["busy"]:
+                    result = enrich_dns_failure(result, DNS_PORT)
+                    log.error(
+                        "Blocking change failed because DNS is down; port %s owner: %s",
+                        DNS_PORT,
+                        result.get("owner_summary") if isinstance(result, dict) else result,
+                    )
             self._send_json(status, result)
             return
 
@@ -764,6 +1141,15 @@ def main() -> None:
     ready = wait_for_pihole()
     if not ready:
         log.error("Continuing without confirmed Pi-hole API readiness; requests may fail until it starts")
+
+    port_status = dns_port_status(DNS_PORT)
+    if port_status.get("busy"):
+        log.error("Pi-hole DNS is not healthy on port %s: %s", DNS_PORT, port_status.get("detail"))
+        for owner in port_status.get("owners") or []:
+            log.error("  port %s owner: %s", DNS_PORT, owner.get("detail") or owner)
+    else:
+        log.info("Pi-hole DNS probe OK on port %s", DNS_PORT)
+
     sid = authenticate(force=True)
     if sid:
         log.info("Initial Pi-hole session established")
