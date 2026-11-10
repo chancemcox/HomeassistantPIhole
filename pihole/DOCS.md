@@ -249,7 +249,11 @@ From the Home Assistant sidebar you can:
 - Flush the query log
 - View DNS setup examples for routers and devices
 
-The native Pi-hole admin UI can optionally be exposed by assigning host port **8088** under the app network settings. Ingress is enough for day-to-day control.
+DNS always listens on host port **53**. The native Pi-hole admin / API listens on host port **8088**.
+
+- **Ingress sidebar** → custom management panel (blocking, traffic, lists).
+- **Open Web UI** on the add-on page → native Pi-hole admin at `http://<host>:8088/admin`.
+- You can disable the published `8088` host mapping under Network if you only want Ingress.
 
 ## Options
 

@@ -12,6 +12,7 @@ const els = {
   recentList: document.getElementById("recent-list"),
   topList: document.getElementById("top-list"),
   dnsIps: document.getElementById("dns-ips"),
+  adminUrls: document.getElementById("admin-urls"),
   dnsExamples: document.getElementById("dns-examples"),
   versionLine: document.getElementById("version-line"),
   actionLog: document.getElementById("action-log"),
@@ -164,14 +165,46 @@ async function refreshDomains() {
 
 async function refreshSetup() {
   const data = await api("/api/setup");
+  const dnsPort = data.dns_port || 53;
+  const adminPort = data.admin_port || 8088;
+
   els.dnsIps.innerHTML = "";
   const ips = data.dns_ips?.length ? data.dns_ips : ["Set a static IP on this host"];
   for (const ip of ips) {
     const chip = document.createElement("div");
     chip.className = "dns-chip";
-    chip.textContent = `${ip}:${data.dns_port || 53}`;
+    chip.textContent = `${ip}:${dnsPort}`;
+    chip.title = "DNS — use this address on port 53";
     els.dnsIps.appendChild(chip);
   }
+
+  if (els.adminUrls) {
+    els.adminUrls.innerHTML = "";
+    const adminUrls =
+      data.admin_urls?.length > 0
+        ? data.admin_urls
+        : ips
+            .filter((ip) => !String(ip).includes(" "))
+            .map((ip) => `http://${ip}:${adminPort}/admin`);
+    if (!adminUrls.length) {
+      const chip = document.createElement("div");
+      chip.className = "dns-chip";
+      chip.textContent = `host:${adminPort}/admin`;
+      els.adminUrls.appendChild(chip);
+    } else {
+      for (const url of adminUrls) {
+        const link = document.createElement("a");
+        link.className = "dns-chip admin-chip";
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = url.replace(/^https?:\/\//, "");
+        link.title = `Native Pi-hole web UI on port ${adminPort}`;
+        els.adminUrls.appendChild(link);
+      }
+    }
+  }
+
   renderDnsExamples(data.examples || []);
 }
 

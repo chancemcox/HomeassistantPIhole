@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0
+
+- Point Home Assistant **Open Web UI** at the native Pi-hole admin on port `8088` (`webui`)
+- Publish host port `8088` by default for the web UI; keep DNS on host port `53`
+- Show separate DNS (`:53`) and web UI (`:8088/admin`) links in the Ingress setup panel
+- Management UI API forwarding continues to use `PIHOLE_API_BASE` on port `8088`
+
 ## 1.7.0
 
 - Add GitHub Actions CI with add-on lint, image build, UI smoke tests, and Home Assistant Core install for testing

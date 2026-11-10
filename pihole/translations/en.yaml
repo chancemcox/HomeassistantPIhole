@@ -24,6 +24,6 @@ configuration:
     name: Block Hulu ads
     description: On startup, add curated Hulu/Disney advertising domains and regex filters to the Pi-hole deny list. Results vary because some ads share content CDNs.
 network:
-  53/tcp: DNS over TCP
-  53/udp: DNS over UDP
-  8088/tcp: Native Pi-hole web interface (optional)
+  53/tcp: DNS over TCP (always port 53)
+  53/udp: DNS over UDP (always port 53)
+  8088/tcp: Native Pi-hole web interface (Open Web UI)
