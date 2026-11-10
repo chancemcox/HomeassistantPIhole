@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.1
+
+- Align UI primary color to current Home Assistant token `#009ac7` (`--ha-color-primary-40`)
+- Chart total series uses the same primary for consistency
+
 ## 1.10.0
 
 - Restyle the Ingress management UI to closer match Home Assistant (primary `#03a9f4`, card surfaces, Roboto, light/dark via `prefers-color-scheme`)
