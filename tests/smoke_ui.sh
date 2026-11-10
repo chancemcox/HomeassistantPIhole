@@ -271,10 +271,26 @@ import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
-assert cfg.get("version") == "1.10.4", cfg.get("version")
+assert cfg.get("version") == "1.10.5", cfg.get("version")
 assert cfg.get("ports", {}).get("53/tcp") == 53
 assert cfg.get("ports", {}).get("8088/tcp") == 8088
 print("config ingress_port=8189 OK")
+
+# Humanized owner summary for the common AdGuard localhost bind pattern.
+summary = mod._humanize_port_owner_summary(
+    53,
+    [
+        {"proto": "UDP", "address": "127.0.0.1", "comm": "", "detail": "UDP listener on 127.0.0.1:53"},
+        {"proto": "UDP", "address": "::1", "comm": "", "detail": "UDP listener on ::1:53"},
+        {"proto": "TCP", "address": "127.0.0.1", "comm": "", "detail": "TCP listener on 127.0.0.1:53"},
+        {"proto": "TCP", "address": "::1", "comm": "", "detail": "TCP listener on ::1:53"},
+    ],
+    [],
+)
+assert "localhost DNS service" in summary, summary
+assert "AdGuard" in summary, summary
+assert "UNCONN" not in summary and "LISTEN 0 4096" not in summary, summary
+print("humanized localhost port-53 summary OK")
 
 print("UI smoke test passed (page shows)")
 PY

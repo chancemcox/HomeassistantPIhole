@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.5
+
+- Name the port-53 conflict clearly (no raw `ss` dump): localhost-only binds call out AdGuard / DNS stubs; `127.0.0.53` → systemd-resolved
+- Fix Supervisor add-on lookup on `host_network` by trying `172.30.32.2` first (same as Ingress port resolution)
+
 ## 1.10.4
 
 - Fix Enable blocking failures when DNS never started: surface Pi-hole `dns_failure` next to the button
