@@ -25,7 +25,7 @@ if sys_path_dir not in __import__("sys").path:
 from presets import HULU_ADS_PRESET, PRESETS, list_presets  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8080").rstrip("/")
+API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8088").rstrip("/")
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
 UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8099"))
 LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
@@ -57,7 +57,7 @@ log = logging.getLogger("pihole-ha-ui")
 def wait_for_pihole(timeout: int = 120) -> bool:
     deadline = time.time() + timeout
     host = "127.0.0.1"
-    port = 8080
+    port = 8088
     try:
         parsed = urllib.parse.urlparse(API_BASE)
         host = parsed.hostname or host
@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "dns_ips": ips,
                     "dns_port": 53,
-                    "admin_port": 8080,
+                    "admin_port": 8088,
                     "example_ip": example_ip,
                     "upstream_hint": "Point your router DHCP DNS to one of these addresses.",
                     "examples": build_dns_examples(example_ip),

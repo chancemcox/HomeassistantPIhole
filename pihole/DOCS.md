@@ -248,7 +248,7 @@ From the Home Assistant sidebar you can:
 - Flush the query log
 - View DNS setup examples for routers and devices
 
-The native Pi-hole admin UI can optionally be exposed by assigning host port **8080** under the app network settings. Ingress is enough for day-to-day control.
+The native Pi-hole admin UI can optionally be exposed by assigning host port **8088** under the app network settings. Ingress is enough for day-to-day control.
 
 ## Options
 
@@ -274,7 +274,7 @@ Values supplied through these options are applied as Pi-hole `FTLCONF_*` environ
 
 ## Home Assistant integration
 
-After DNS is working, you can also add the built-in **Pi-hole** integration pointed at the host IP and port `8080` (if exposed) using the same password.
+After DNS is working, you can also add the built-in **Pi-hole** integration pointed at the host IP and port `8088` (if exposed) using the same password.
 
 ## Notes
 

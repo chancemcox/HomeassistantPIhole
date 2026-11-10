@@ -10,7 +10,7 @@ configuration:
     description: How Pi-hole binds DNS sockets. ALL is recommended for Docker / Home Assistant host networking.
   interface_theme:
     name: Native UI theme
-    description: Theme used by the optional native Pi-hole admin interface on port 8080.
+    description: Theme used by the optional native Pi-hole admin interface on port 8088.
   query_logging:
     name: Query logging
     description: Store DNS query history for the dashboard and recent-block lists.
@@ -26,4 +26,4 @@ configuration:
 network:
   53/tcp: DNS over TCP
   53/udp: DNS over UDP
-  8080/tcp: Native Pi-hole web interface (optional)
+  8088/tcp: Native Pi-hole web interface (optional)

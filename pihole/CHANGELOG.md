@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- Move native Pi-hole admin / API webserver from port `8080` to `8088`
+
 ## 1.2.0
 
 - Add curated **Hulu ads** streaming preset (exact + regex deny list)
