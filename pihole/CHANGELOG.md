@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.0
+
+- Fix Ingress sidebar collision on `host_network`: use `ingress_port: 0` and bind the management UI to the Supervisor-assigned port
+- Prevents the Pi-hole panel from opening another app that still listens on fixed `8099` (for example HomeScan)
+- DNS remains on port `53`; native Pi-hole admin/API remains on port `8088`
+
 ## 1.8.0
 
 - Point Home Assistant **Open Web UI** at the native Pi-hole admin on port `8088` (`webui`)

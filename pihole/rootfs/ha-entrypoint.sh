@@ -148,6 +148,53 @@ else
   log_info "Using admin password from add-on options (length=${#PASSWORD})"
 fi
 
+resolve_ingress_ui_port() {
+  # With host_network + ingress_port: 0, Supervisor assigns a free high port.
+  # Bind the management UI there so the Pi-hole sidebar does not land on another
+  # host-network app that still owns fixed 8099 (for example HomeScan).
+  if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+    local resolved
+    resolved="$(
+      python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+import urllib.request
+
+token = os.environ.get("SUPERVISOR_TOKEN", "")
+req = urllib.request.Request(
+    "http://supervisor/addons/self/info",
+    headers={"Authorization": f"Bearer {token}"},
+)
+try:
+    with urllib.request.urlopen(req, timeout=5) as response:
+        payload = json.load(response)
+except Exception:
+    raise SystemExit(0)
+
+data = payload.get("data") or payload
+port = data.get("ingress_port")
+if isinstance(port, int) and port > 0:
+    print(port)
+PY
+    )"
+    if [[ -n "${resolved}" ]]; then
+      log_info "Resolved Supervisor ingress_port=${resolved}"
+      printf '%s' "${resolved}"
+      return 0
+    fi
+    log_warn "Could not read Supervisor ingress_port; falling back"
+  fi
+
+  if [[ -n "${PIHOLE_HA_UI_PORT:-}" ]]; then
+    log_info "Using PIHOLE_HA_UI_PORT=${PIHOLE_HA_UI_PORT}"
+    printf '%s' "${PIHOLE_HA_UI_PORT}"
+    return 0
+  fi
+
+  log_debug "No Supervisor ingress port; defaulting management UI to 8099"
+  printf '%s' "8099"
+}
+
 export TZ="${TIMEZONE}"
 export FTLCONF_webserver_api_password="${PASSWORD}"
 export FTLCONF_dns_upstreams="${UPSTREAM_DNS}"
@@ -156,7 +203,7 @@ export FTLCONF_webserver_interface_theme="${INTERFACE_THEME}"
 export FTLCONF_dns_queryLogging="${QUERY_LOGGING}"
 export FTLCONF_webserver_port="${FTLCONF_webserver_port:-8088}"
 export PIHOLE_HA_PASSWORD="${PASSWORD}"
-export PIHOLE_HA_UI_PORT="${PIHOLE_HA_UI_PORT:-8099}"
+export PIHOLE_HA_UI_PORT="$(resolve_ingress_ui_port)"
 export PIHOLE_API_BASE="${PIHOLE_API_BASE:-http://127.0.0.1:8088}"
 export PIHOLE_HA_LOG_LEVEL="${LOG_LEVEL}"
 export PIHOLE_HA_BLOCK_HULU_ADS="${BLOCK_HULU_ADS}"
