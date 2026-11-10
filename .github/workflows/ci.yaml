@@ -34,6 +34,11 @@ jobs:
           assert not missing, f"Missing keys: {missing}"
           assert "amd64" in cfg["arch"] and "aarch64" in cfg["arch"]
           assert cfg.get("ingress") is True
+          # frenck/action-addon-linter rejects webui whenever Ingress is enabled
+          assert "webui" not in cfg, "webui must be omitted when ingress is true"
+          assert cfg.get("ports", {}).get("53/tcp") == 53
+          assert cfg.get("ports", {}).get("53/udp") == 53
+          assert cfg.get("ports", {}).get("8088/tcp") == 8088
           print(f"Add-on {cfg['slug']} version {cfg['version']} OK")
           PY
 

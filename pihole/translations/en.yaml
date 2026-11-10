@@ -26,4 +26,4 @@ configuration:
 network:
   53/tcp: DNS over TCP (always port 53)
   53/udp: DNS over UDP (always port 53)
-  8088/tcp: Native Pi-hole web interface (Open Web UI)
+  8088/tcp: Native Pi-hole web interface (direct access)

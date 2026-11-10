@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.9.0"
+version: "1.9.1"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
@@ -19,7 +19,6 @@ privileged:
   - NET_ADMIN
   - NET_RAW
 hassio_api: true
-webui: http://[HOST]:[PORT:8088]
 ports:
   53/tcp: 53
   53/udp: 53
@@ -27,7 +26,7 @@ ports:
 ports_description:
   53/tcp: DNS (TCP)
   53/udp: DNS (UDP)
-  8088/tcp: Native Pi-hole admin UI (Open Web UI / direct access)
+  8088/tcp: Native Pi-hole admin UI (direct access)
 options:
   password: ""
   upstream_dns:

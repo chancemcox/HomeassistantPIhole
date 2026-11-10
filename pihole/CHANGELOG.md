@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.1
+
+- Fix GitHub Actions add-on lint: remove `webui` while Ingress is enabled (rejected by `frenck/action-addon-linter`)
+- Native admin remains available at host port `8088`; use the sidebar Ingress panel or open `http://<host>:8088/admin` directly
+
 ## 1.9.0
 
 - Fix Ingress sidebar collision on `host_network`: use `ingress_port: 0` and bind the management UI to the Supervisor-assigned port
