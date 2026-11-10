@@ -18,6 +18,14 @@ const els = {
   domainForm: document.getElementById("domain-form"),
   domainInput: document.getElementById("domain-input"),
   domainType: document.getElementById("domain-type"),
+  trafficTotal: document.getElementById("traffic-total"),
+  trafficBlocked: document.getElementById("traffic-blocked"),
+  trafficCached: document.getElementById("traffic-cached"),
+  trafficForwarded: document.getElementById("traffic-forwarded"),
+  trafficChart: document.getElementById("traffic-chart"),
+  trafficEmpty: document.getElementById("traffic-empty"),
+  queryLog: document.getElementById("query-log"),
+  topClients: document.getElementById("top-clients"),
 };
 
 function fmt(n) {
@@ -167,6 +175,150 @@ async function refreshSetup() {
   renderDnsExamples(data.examples || []);
 }
 
+function buildPolyline(points, width, height, pad) {
+  if (!points.length) return "";
+  const max = Math.max(...points, 1);
+  return points
+    .map((value, index) => {
+      const x = pad + (index / Math.max(points.length - 1, 1)) * (width - pad * 2);
+      const y = height - pad - (value / max) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function renderTrafficChart(history) {
+  const svg = els.trafficChart;
+  const empty = els.trafficEmpty;
+  svg.innerHTML = "";
+  const rows = (history || []).filter((row) => row && typeof row.total === "number");
+  if (!rows.length) {
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+
+  const width = 1000;
+  const height = 280;
+  const pad = 24;
+  const totals = rows.map((row) => Number(row.total) || 0);
+  const blocked = rows.map((row) => Number(row.blocked) || 0);
+  const forwarded = rows.map((row) => Number(row.forwarded) || 0);
+  const max = Math.max(...totals, 1);
+
+  const grid = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  for (let i = 0; i <= 4; i += 1) {
+    const y = pad + ((height - pad * 2) * i) / 4;
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", String(pad));
+    line.setAttribute("x2", String(width - pad));
+    line.setAttribute("y1", String(y));
+    line.setAttribute("y2", String(y));
+    line.setAttribute("stroke", "rgba(167, 214, 208, 0.12)");
+    grid.appendChild(line);
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.textContent = fmt(Math.round(max - (max * i) / 4));
+    label.setAttribute("x", "8");
+    label.setAttribute("y", String(y + 4));
+    label.setAttribute("fill", "#9bb5b8");
+    label.setAttribute("font-size", "12");
+    label.setAttribute("font-family", "IBM Plex Mono, monospace");
+    grid.appendChild(label);
+  }
+  svg.appendChild(grid);
+
+  const series = [
+    { values: totals, color: "#2ec4b6", width: 2.5 },
+    { values: blocked, color: "#ef6f6c", width: 2 },
+    { values: forwarded, color: "#f4a261", width: 2 },
+  ];
+  for (const item of series) {
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", item.color);
+    polyline.setAttribute("stroke-width", String(item.width));
+    polyline.setAttribute("stroke-linejoin", "round");
+    polyline.setAttribute("stroke-linecap", "round");
+    polyline.setAttribute("points", buildPolyline(item.values, width, height, pad));
+    svg.appendChild(polyline);
+  }
+}
+
+function queryStatusLabel(entry) {
+  const status = String(entry.status || entry.status_id || "").toLowerCase();
+  if (
+    status.includes("block") ||
+    status.includes("gravity") ||
+    status.includes("denylist") ||
+    status.includes("regex")
+  ) {
+    return { label: "Blocked", blocked: true };
+  }
+  if (entry.blocked === true) return { label: "Blocked", blocked: true };
+  return { label: entry.status || entry.reply || "OK", blocked: false };
+}
+
+function renderQueryLog(queries) {
+  els.queryLog.innerHTML = "";
+  if (!queries?.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.className = "empty";
+    cell.textContent = "No recent queries yet.";
+    row.appendChild(cell);
+    els.queryLog.appendChild(row);
+    return;
+  }
+
+  for (const entry of queries.slice(0, 40)) {
+    const row = document.createElement("tr");
+    const time = document.createElement("td");
+    const ts = entry.time || entry.timestamp;
+    time.textContent = ts
+      ? new Date((Number(ts) > 1e12 ? Number(ts) : Number(ts) * 1000)).toLocaleTimeString()
+      : "—";
+
+    const domain = document.createElement("td");
+    domain.className = "domain";
+    domain.textContent = entry.domain || "—";
+
+    const client = document.createElement("td");
+    client.textContent = entry.client?.name || entry.client?.ip || entry.client || "—";
+
+    const result = document.createElement("td");
+    const info = queryStatusLabel(entry);
+    const badge = document.createElement("span");
+    badge.className = `badge-result ${info.blocked ? "is-blocked" : "is-ok"}`;
+    badge.textContent = info.label;
+    result.appendChild(badge);
+
+    row.append(time, domain, client, result);
+    els.queryLog.appendChild(row);
+  }
+}
+
+async function refreshTraffic() {
+  const data = await api("/api/traffic?length=40");
+  const totals = data.totals_24h || {};
+  els.trafficTotal.textContent = fmt(totals.total);
+  els.trafficBlocked.textContent = fmt(totals.blocked);
+  els.trafficCached.textContent = fmt(totals.cached);
+  els.trafficForwarded.textContent = fmt(totals.forwarded);
+  renderTrafficChart(data.history || []);
+  renderQueryLog(data.queries || []);
+
+  const clients = data.top_clients?.clients || [];
+  renderList(
+    els.topClients,
+    clients.map((client) => ({
+      domain: client.name || client.ip || "unknown",
+      count: client.count,
+    })),
+    "No client traffic yet.",
+  );
+}
+
 async function refreshPresets() {
   const notes = document.getElementById("hulu-notes");
   const desc = document.getElementById("hulu-preset-desc");
@@ -295,7 +447,13 @@ document.querySelectorAll(".tab").forEach((tab) => {
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshOverview(), refreshDomains(), refreshSetup(), refreshPresets()]);
+    await Promise.all([
+      refreshOverview(),
+      refreshTraffic(),
+      refreshDomains(),
+      refreshSetup(),
+      refreshPresets(),
+    ]);
   } catch (error) {
     els.badge.classList.remove("is-on", "is-off");
     els.badge.classList.add("is-loading");
@@ -305,4 +463,4 @@ async function refreshAll() {
 }
 
 refreshAll();
-setInterval(refreshAll, 15000);
+setInterval(refreshAll, 10000);
