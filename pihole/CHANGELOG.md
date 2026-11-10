@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.0
+
+- Restyle the Ingress management UI to closer match Home Assistant (primary `#03a9f4`, card surfaces, Roboto, light/dark via `prefers-color-scheme`)
+- Chart and status colors use HA primary / accent / error tokens
+
 ## 1.9.3
 
 - Fix persistent Ingress **502 Bad Gateway** by using a fixed unique `ingress_port: 8189` (not `8099`, not dynamic `0`)

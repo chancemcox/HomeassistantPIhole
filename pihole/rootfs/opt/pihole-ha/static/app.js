@@ -247,23 +247,30 @@ function renderTrafficChart(history) {
     line.setAttribute("x2", String(width - pad));
     line.setAttribute("y1", String(y));
     line.setAttribute("y2", String(y));
-    line.setAttribute("stroke", "rgba(167, 214, 208, 0.12)");
+    line.setAttribute("stroke", "rgba(33, 33, 33, 0.12)");
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      line.setAttribute("stroke", "rgba(225, 225, 225, 0.12)");
+    }
     grid.appendChild(line);
     const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
     label.textContent = fmt(Math.round(max - (max * i) / 4));
     label.setAttribute("x", "8");
     label.setAttribute("y", String(y + 4));
-    label.setAttribute("fill", "#9bb5b8");
+    label.setAttribute("fill", "#727272");
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      label.setAttribute("fill", "#9b9b9b");
+    }
     label.setAttribute("font-size", "12");
-    label.setAttribute("font-family", "IBM Plex Mono, monospace");
+    label.setAttribute("font-family", "Roboto Mono, monospace");
     grid.appendChild(label);
   }
   svg.appendChild(grid);
 
+  // Home Assistant primary / error / accent
   const series = [
-    { values: totals, color: "#2ec4b6", width: 2.5 },
-    { values: blocked, color: "#ef6f6c", width: 2 },
-    { values: forwarded, color: "#f4a261", width: 2 },
+    { values: totals, color: "#03a9f4", width: 2.5 },
+    { values: blocked, color: "#db4437", width: 2 },
+    { values: forwarded, color: "#ff9800", width: 2 },
   ];
   for (const item of series) {
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
