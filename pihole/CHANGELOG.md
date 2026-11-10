@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2
+
+- Fix Ingress **502 Bad Gateway**: resolve the Supervisor-assigned ingress port via `172.30.32.2` (host_network cannot rely on the `supervisor` DNS name)
+- Retry lookup and abort startup instead of silently binding `8099`, which left Ingress proxying an empty dynamic port
+- CI now asserts the management **page HTML shows** (title, traffic/setup panels, static assets) and that ingress-port resolution works
+
 ## 1.9.1
 
 - Fix GitHub Actions add-on lint: remove `webui` while Ingress is enabled (rejected by `frenck/action-addon-linter`)
