@@ -191,11 +191,57 @@ upstream_dns:
   - 9.9.9.9
 ```
 
+## Block Hulu ads
+
+Hulu ads are harder than normal web ads because many creatives are served from content CDNs. This app includes a curated **Hulu ads** preset that adds common advertising / tracking hostnames and regex filters to Pi-hole’s deny list.
+
+### One-click from the sidebar
+
+1. Make sure the Hulu device uses Pi-hole for DNS.
+2. Open the Pi-hole panel in Home Assistant.
+3. Under **Streaming presets**, click **Block Hulu ads**.
+4. Play Hulu and watch **Recent blocks** for `hulustream`, `hulu.com` ad hosts, or `disneyadvertising.com`.
+
+### Auto-apply on startup
+
+In the add-on options, enable:
+
+```yaml
+block_hulu_ads: true
+```
+
+The management UI applies the same preset after Pi-hole becomes ready.
+
+### What the preset blocks
+
+Exact hosts (examples):
+
+- `ads-e-darwin.hulustream.com`
+- `ads-v-darwin.hulustream.com`
+- `ads-api.hulu.com`
+- `track.hulu.com`
+- `collector.hulu.com`
+- `disneyadvertising.com`
+
+Regex examples:
+
+- `(^|\.)disneyadvertising\.com$`
+- `(^|\.)ads-.*\.hulustream\.com$`
+
+### Important caveats
+
+- Results vary by app / TV / browser. Some ads cannot be blocked with DNS alone.
+- Blocking `disneyadvertising.com` often removes ads but may skip a few seconds of show around ad breaks.
+- Do **not** block `vortex.hulu.com` or `doppler.hulu.com` — that breaks playback telemetry and can error the app.
+- If Hulu breaks, remove the Hulu preset entries from the deny list (or disable `block_hulu_ads` and delete those domains).
+- An ad-free Hulu plan is still the only fully reliable approach.
+
 ## Management panel
 
 From the Home Assistant sidebar you can:
 
 - Enable, disable, or pause blocking
+- Apply the **Hulu ads** streaming preset
 - Watch query / block / client metrics
 - Add or remove allow and deny domains
 - Update gravity blocklists
@@ -215,6 +261,7 @@ The native Pi-hole admin UI can optionally be exposed by assigning host port **8
 | `query_logging` | Enable DNS query history. |
 | `timezone` | IANA timezone string. |
 | `log_level` | Add-on + UI log verbosity: `trace`, `debug`, `info`, `warning`, `error`. |
+| `block_hulu_ads` | When true, apply the curated Hulu/Disney advertising deny-list on startup. |
 
 Values supplied through these options are applied as Pi-hole `FTLCONF_*` environment settings and are the source of truth after each restart.
 

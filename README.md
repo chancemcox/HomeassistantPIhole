@@ -8,6 +8,7 @@ Install [Pi-hole](https://pi-hole.net/) as a Home Assistant app and use it as yo
 - Configures upstream DNS, password, listening mode, and timezone from the app options
 - Serves a **management UI** in the Home Assistant sidebar (Ingress)
 - Enable / pause / disable blocking, manage allow & deny lists, update gravity
+- Optional **Hulu ads** preset for common Hulu/Disney advertising domains
 - Shows the host DNS address so you can point your router at Pi-hole
 
 ## Add the repository

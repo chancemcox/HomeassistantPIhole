@@ -167,6 +167,27 @@ async function refreshSetup() {
   renderDnsExamples(data.examples || []);
 }
 
+async function refreshPresets() {
+  const notes = document.getElementById("hulu-notes");
+  const desc = document.getElementById("hulu-preset-desc");
+  if (!notes) return;
+  try {
+    const data = await api("/api/presets/hulu-ads");
+    if (desc && data.description) desc.textContent = data.description;
+    notes.innerHTML = "";
+    for (const note of data.notes || []) {
+      const li = document.createElement("li");
+      li.textContent = note;
+      notes.appendChild(li);
+    }
+  } catch (error) {
+    notes.innerHTML = "";
+    const li = document.createElement("li");
+    li.textContent = `Could not load Hulu preset details: ${error.message}`;
+    notes.appendChild(li);
+  }
+}
+
 async function setBlocking(blocking, timer) {
   try {
     const body = { blocking };
@@ -187,6 +208,35 @@ document.getElementById("btn-enable").addEventListener("click", () => setBlockin
 document.getElementById("btn-disable").addEventListener("click", () => setBlocking(false));
 document.getElementById("btn-pause").addEventListener("click", () => setBlocking(false, 300));
 document.getElementById("btn-refresh").addEventListener("click", () => refreshAll());
+
+document.getElementById("btn-hulu-ads").addEventListener("click", async () => {
+  const button = document.getElementById("btn-hulu-ads");
+  button.disabled = true;
+  showLog("Applying Hulu ads deny-list preset…");
+  try {
+    const result = await api("/api/presets/hulu-ads/apply", {
+      method: "POST",
+      body: "{}",
+    });
+    const added = result.added?.length || 0;
+    const skipped = result.skipped?.length || 0;
+    const failed = result.failed?.length || 0;
+    showLog(
+      `Hulu preset finished. Added ${added}, already present ${skipped}, failed ${failed}.\n` +
+        (result.notes || []).join("\n"),
+    );
+    state.filter = "deny/exact";
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.classList.toggle("is-active", tab.dataset.filter === state.filter);
+    });
+    await refreshDomains();
+    await refreshOverview();
+  } catch (error) {
+    showLog(`Hulu preset failed: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 document.getElementById("btn-gravity").addEventListener("click", async () => {
   showLog("Updating gravity lists…");
@@ -245,7 +295,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshOverview(), refreshDomains(), refreshSetup()]);
+    await Promise.all([refreshOverview(), refreshDomains(), refreshSetup(), refreshPresets()]);
   } catch (error) {
     els.badge.classList.remove("is-on", "is-off");
     els.badge.classList.add("is-loading");

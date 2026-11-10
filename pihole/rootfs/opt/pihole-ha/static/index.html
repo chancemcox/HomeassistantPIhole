@@ -51,6 +51,24 @@
       </section>
 
       <div class="panels">
+        <section class="panel" aria-labelledby="streaming-title">
+          <div class="panel-head">
+            <h2 id="streaming-title">Streaming presets</h2>
+            <p>One-click deny lists for stubborn streaming ads. DNS blocking is imperfect for Hulu.</p>
+          </div>
+          <div class="preset-card">
+            <div>
+              <h3>Hulu ads</h3>
+              <p id="hulu-preset-desc">
+                Blocks Hulu / Disney advertising hosts and regexes. May skip a few seconds near ad
+                breaks. Do not block vortex.hulu.com or doppler.hulu.com.
+              </p>
+            </div>
+            <button id="btn-hulu-ads" class="btn primary" type="button">Block Hulu ads</button>
+          </div>
+          <ul id="hulu-notes" class="setup-steps"></ul>
+        </section>
+
         <section class="panel" aria-labelledby="lists-title">
           <div class="panel-head">
             <h2 id="lists-title">Domain lists</h2>

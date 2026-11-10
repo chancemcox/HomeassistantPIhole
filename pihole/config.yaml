@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.1.0"
+version: "1.2.0"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
@@ -36,6 +36,7 @@ options:
   query_logging: true
   timezone: America/Chicago
   log_level: info
+  block_hulu_ads: false
 schema:
   password: password?
   upstream_dns:
@@ -45,6 +46,7 @@ schema:
   query_logging: bool
   timezone: str
   log_level: list(trace|debug|info|warning|error)
+  block_hulu_ads: bool
 backup_exclude:
   - "**/pihole-FTL.db"
   - "**/pihole-FTL.db-*"

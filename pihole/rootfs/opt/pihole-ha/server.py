@@ -17,11 +17,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+# Allow `python3 /opt/pihole-ha/server.py` imports from the same directory.
+sys_path_dir = str(Path(__file__).resolve().parent)
+if sys_path_dir not in __import__("sys").path:
+    __import__("sys").path.insert(0, sys_path_dir)
+
+from presets import HULU_ADS_PRESET, PRESETS, list_presets  # noqa: E402
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8080").rstrip("/")
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
 UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8099"))
 LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
+AUTO_BLOCK_HULU_ADS = os.environ.get("PIHOLE_HA_BLOCK_HULU_ADS", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 ALLOWED_DOMAIN_FILTERS = {
     "allow/exact",
     "allow/regex",
@@ -112,7 +125,16 @@ def api_request(
         except json.JSONDecodeError:
             payload = {"error": raw.decode("utf-8", errors="replace")}
         elapsed_ms = int((time.time() - started) * 1000)
-        log.warning("API %s %s -> HTTP %s (%sms): %s", method, path, exc.code, elapsed_ms, payload)
+        level = logging.DEBUG if exc.code in {400, 404} else logging.WARNING
+        log.log(
+            level,
+            "API %s %s -> HTTP %s (%sms): %s",
+            method,
+            path,
+            exc.code,
+            elapsed_ms,
+            payload,
+        )
         return exc.code, payload, dict(exc.headers)
     except urllib.error.URLError as exc:
         elapsed_ms = int((time.time() - started) * 1000)
@@ -171,6 +193,60 @@ def authed_request(
         sid = authenticate(force=True)
         status, payload, _ = api_request(method, path, body, sid=sid, timeout=timeout)
     return status, payload
+
+
+def apply_preset(preset_id: str) -> dict[str, Any]:
+    preset = PRESETS.get(preset_id)
+    if not preset:
+        return {"ok": False, "error": f"Unknown preset: {preset_id}"}
+
+    comment = preset.get("comment") or f"pihole-ha preset: {preset_id}"
+    added: list[dict[str, str]] = []
+    skipped: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+
+    def _add(kind: str, value: str) -> None:
+        status, payload = authed_request(
+            "POST",
+            f"/api/domains/deny/{kind}",
+            {"domain": value, "enabled": True, "comment": comment},
+        )
+        entry = {"kind": kind, "domain": value}
+        if status in {200, 201}:
+            added.append(entry)
+            log.info("Preset %s added deny/%s %s", preset_id, kind, value)
+            return
+        # Pi-hole returns database_error when the item already exists.
+        message = ""
+        if isinstance(payload, dict):
+            err = payload.get("error") or {}
+            if isinstance(err, dict):
+                message = str(err.get("message") or err.get("hint") or "")
+            else:
+                message = str(payload.get("error") or payload)
+        lowered = message.lower()
+        if status == 400 and ("already" in lowered or "present" in lowered or "unique" in lowered):
+            skipped.append({**entry, "reason": message or "already present"})
+            log.debug("Preset %s already had deny/%s %s", preset_id, kind, value)
+            return
+        failed.append({**entry, "status": status, "error": payload})
+        log.warning("Preset %s failed deny/%s %s -> %s %s", preset_id, kind, value, status, payload)
+
+    for domain in preset.get("exact", []):
+        _add("exact", domain)
+    for pattern in preset.get("regex", []):
+        _add("regex", pattern)
+
+    return {
+        "ok": not failed,
+        "preset": preset_id,
+        "title": preset.get("title"),
+        "added": added,
+        "skipped": skipped,
+        "failed": failed,
+        "notes": preset.get("notes", []),
+        "never_block": preset.get("never_block", []),
+    }
 
 
 def detect_host_ips() -> list[str]:
@@ -325,6 +401,28 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/presets":
+            self._send_json(200, {"presets": list_presets()})
+            return
+        if path.startswith("/api/presets/"):
+            preset_id = path[len("/api/presets/") :].strip("/")
+            preset = PRESETS.get(preset_id)
+            if not preset:
+                self._send_json(404, {"error": "Unknown preset"})
+                return
+            self._send_json(
+                200,
+                {
+                    "id": preset["id"],
+                    "title": preset["title"],
+                    "description": preset["description"],
+                    "exact": preset["exact"],
+                    "regex": preset["regex"],
+                    "notes": preset["notes"],
+                    "never_block": preset["never_block"],
+                },
+            )
+            return
 
         self._send_json(404, {"error": "Not found"})
 
@@ -405,6 +503,13 @@ class Handler(BaseHTTPRequestHandler):
             log.info("Flushing query logs")
             status, result = authed_request("POST", "/api/action/flush/logs")
             self._send_json(status, result)
+            return
+
+        if path.startswith("/api/presets/") and path.endswith("/apply"):
+            preset_id = path[len("/api/presets/") : -len("/apply")].strip("/")
+            log.info("Applying preset %s", preset_id)
+            result = apply_preset(preset_id)
+            self._send_json(200 if result.get("ok") else 207, result)
             return
 
         self._send_json(404, {"error": "Not found"})
@@ -559,11 +664,12 @@ def build_dns_examples(ip: str) -> list[dict[str, str]]:
 
 def main() -> None:
     log.info(
-        "Starting management UI log_level=%s api_base=%s ui_port=%s password_set=%s",
+        "Starting management UI log_level=%s api_base=%s ui_port=%s password_set=%s block_hulu_ads=%s",
         LOG_LEVEL_NAME.lower(),
         API_BASE,
         UI_PORT,
         bool(PASSWORD),
+        AUTO_BLOCK_HULU_ADS,
     )
     ready = wait_for_pihole()
     if not ready:
@@ -573,6 +679,16 @@ def main() -> None:
         log.info("Initial Pi-hole session established")
     else:
         log.warning("Initial Pi-hole authentication failed; will retry on demand")
+
+    if AUTO_BLOCK_HULU_ADS:
+        log.info("Auto-applying Hulu ads preset (%s)", HULU_ADS_PRESET["id"])
+        result = apply_preset(HULU_ADS_PRESET["id"])
+        log.info(
+            "Hulu preset result added=%s skipped=%s failed=%s",
+            len(result.get("added", [])),
+            len(result.get("skipped", [])),
+            len(result.get("failed", [])),
+        )
 
     # Bind all interfaces so Home Assistant Ingress can reach us with host_network.
     # Access is still restricted by peer IP allow-list.
