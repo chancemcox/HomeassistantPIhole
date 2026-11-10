@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.2
+
+- Fix unstyled Ingress UI (Times New Roman / stuck on Checking…): use **relative** `static/` and API URLs so assets load under `/api/hassio_ingress/.../`
+- Absolute `/static/...` and `/api/...` paths were escaping the Ingress prefix
+
 ## 1.10.1
 
 - Align UI primary color to current Home Assistant token `#009ac7` (`--ha-color-primary-40`)
