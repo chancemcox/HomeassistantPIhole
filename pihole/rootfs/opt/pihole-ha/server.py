@@ -47,7 +47,7 @@ ALLOWED_KINDS = {"exact", "regex"}
 
 
 def _admin_port_from_api_base(api_base: str) -> int:
-    """Native Pi-hole web/API listen port used for Open Web UI and API forwarding."""
+    """Native Pi-hole web/API listen port used for direct admin access and API forwarding."""
     try:
         parsed = urllib.parse.urlparse(api_base)
         if parsed.port:
