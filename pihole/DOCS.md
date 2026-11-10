@@ -21,17 +21,175 @@ This app installs [Pi-hole](https://pi-hole.net/) v6 inside Home Assistant and c
    - **Admin password** (recommended)
    - **Upstream DNS servers** (defaults to Cloudflare `1.1.1.1` / `1.0.0.1`)
    - **Timezone**
+   - **Log level** (`info` by default; use `debug` or `trace` while troubleshooting)
 6. Start the app.
 7. Enable **Show in sidebar** to open the management panel.
 
-## Make it the network DNS server
+## How to use Pi-hole as DNS
 
-1. Confirm the Home Assistant host IP (also shown in the Ingress panel under **DNS setup**).
-2. On your router, set the LAN DHCP DNS server to that IP.
-3. Renew DHCP leases on clients (or reboot them).
-4. Visit a site with ads — blocked domains appear under **Recent blocks**.
+Replace `192.168.1.50` below with the Home Assistant host IP shown in the sidebar under **DNS setup**.
 
-You can also set DNS manually on a single device to test before changing the router.
+### 1) Recommended: set DNS on your router (whole network)
+
+This is the best approach. Every device that gets DHCP from the router will use Pi-hole automatically.
+
+1. Give Home Assistant a static LAN IP (example: `192.168.1.50`).
+2. Open your router admin page.
+3. Find **LAN**, **DHCP**, or **DNS** settings.
+4. Set **Primary / DNS server 1** to `192.168.1.50`.
+5. Leave secondary empty, or only add a public DNS if you accept ads when Pi-hole is offline.
+6. Save, then renew leases (reboot devices or toggle Wi‑Fi).
+
+**Examples by router brand:**
+
+| Router / system | Where to set DNS |
+| --- | --- |
+| Generic consumer router | LAN → DHCP → DNS Server |
+| UniFi Network | Settings → Networks → LAN → DHCP Service Management → DHCP DNS Server |
+| pfSense | Services → DHCP Server → LAN → DNS Servers |
+| OPNsense | Services → DHCPv4 → LAN → DNS servers |
+| OpenWrt | Network → Interfaces → LAN → DHCP Server → Advanced → DHCP-Options (`6,192.168.1.50`) |
+| Asus Merlin / stock Asus | LAN → DHCP Server → DNS Server 1 |
+| Google Nest Wifi / Wifi Pro | App usually forces Google DNS; set DNS per-device instead or use custom firmware/router mode |
+| Eero | Network settings are limited; prefer per-device DNS or put eero behind another router |
+
+### 2) Quick test on a single device first
+
+Before changing the whole house, point one laptop/phone at Pi-hole:
+
+1. Set that device’s DNS to `192.168.1.50`.
+2. Open the Pi-hole sidebar in Home Assistant.
+3. Visit a site with ads.
+4. Confirm queries appear and blocked domains show under **Recent blocks**.
+
+### 3) Windows 11 example
+
+1. **Settings → Network & internet**.
+2. Open **Wi‑Fi** or **Ethernet** → your connection → **DNS server assignment → Edit**.
+3. Choose **Manual**, enable **IPv4**.
+4. Preferred DNS: `192.168.1.50`
+5. Save.
+
+Verify in PowerShell:
+
+```powershell
+nslookup doubleclick.net 192.168.1.50
+Resolve-DnsName pi.hole -Server 192.168.1.50
+```
+
+### 4) macOS example
+
+1. **System Settings → Network →** select Wi‑Fi/Ethernet → **Details… → DNS**.
+2. Click **+** and add `192.168.1.50`.
+3. Apply.
+
+Flush cache:
+
+```bash
+sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+dig @192.168.1.50 pi.hole +short
+```
+
+### 5) iPhone / iPad example
+
+1. **Settings → Wi‑Fi**.
+2. Tap the **ⓘ** next to your network.
+3. **Configure DNS → Manual**.
+4. Remove existing servers.
+5. Add `192.168.1.50`.
+6. Save.
+
+### 6) Android example
+
+1. **Settings → Network & internet → Internet**.
+2. Tap the gear on your Wi‑Fi network.
+3. **Advanced / Pencil → IP settings**.
+4. If needed switch to static IP (keep your current IP/gateway), set **DNS 1** to `192.168.1.50`.
+5. Save and reconnect.
+
+Note: Android **Private DNS** (DNS-over-TLS) bypasses Pi-hole. Leave Private DNS **Off** for ad blocking on that device.
+
+### 7) Linux (NetworkManager) example
+
+```bash
+# List connections
+nmcli connection show
+
+# Point one connection at Pi-hole
+nmcli connection modify 'Wi-Fi' ipv4.dns "192.168.1.50" ipv4.ignore-auto-dns yes
+nmcli connection up 'Wi-Fi'
+
+# Verify
+resolvectl status
+dig @192.168.1.50 doubleclick.net +short
+```
+
+### 8) UniFi Network example
+
+1. UniFi Network application → **Settings → Networks**.
+2. Edit your LAN.
+3. Under **DHCP Service Management**, set **DHCP DNS Server** to `192.168.1.50`.
+4. Apply Changes.
+5. Reconnect clients or wait for lease renewal.
+
+### 9) pfSense example
+
+1. **Services → DHCP Server → LAN**.
+2. Set **DNS Server** to `192.168.1.50`.
+3. Under **System → General Setup**, either leave DNS empty for clients or keep resolver behavior intentional.
+4. Apply Changes.
+
+### 10) OPNsense example
+
+1. **Services → DHCPv4 → [LAN]**.
+2. DNS servers: `192.168.1.50`.
+3. Save & apply.
+4. Renew client leases.
+
+### 11) Verify DNS is actually using Pi-hole
+
+```bash
+# Should talk to your HA host
+dig @192.168.1.50 pi.hole +short
+
+# Often returns 0.0.0.0 / NXDOMAIN / blocked reply when blocked
+dig @192.168.1.50 doubleclick.net +short
+
+# From a client that should be using Pi-hole via DHCP
+nslookup doubleclick.net
+```
+
+In the Home Assistant Pi-hole panel you should see:
+
+- rising **Queries**
+- non-zero **Blocked**
+- your client under activity / recent blocks
+
+### 12) Upstream DNS examples (add-on options)
+
+These are the resolvers Pi-hole uses **after** it allows a query:
+
+```yaml
+# Cloudflare
+upstream_dns:
+  - 1.1.1.1
+  - 1.0.0.1
+
+# Google
+upstream_dns:
+  - 8.8.8.8
+  - 8.8.4.4
+
+# Quad9
+upstream_dns:
+  - 9.9.9.9
+  - 149.112.112.112
+
+# Mixed
+upstream_dns:
+  - 1.1.1.1
+  - 9.9.9.9
+```
 
 ## Management panel
 
@@ -42,7 +200,7 @@ From the Home Assistant sidebar you can:
 - Add or remove allow and deny domains
 - Update gravity blocklists
 - Flush the query log
-- Copy the DNS address for router setup
+- View DNS setup examples for routers and devices
 
 The native Pi-hole admin UI can optionally be exposed by assigning host port **8080** under the app network settings. Ingress is enough for day-to-day control.
 
@@ -56,8 +214,16 @@ The native Pi-hole admin UI can optionally be exposed by assigning host port **8
 | `interface_theme` | Theme for the native Pi-hole UI. |
 | `query_logging` | Enable DNS query history. |
 | `timezone` | IANA timezone string. |
+| `log_level` | Add-on + UI log verbosity: `trace`, `debug`, `info`, `warning`, `error`. |
 
 Values supplied through these options are applied as Pi-hole `FTLCONF_*` environment settings and are the source of truth after each restart.
+
+### Troubleshooting with logs
+
+1. Set **Log level** to `debug` or `trace`.
+2. Restart the app.
+3. Open **Log** on the add-on page.
+4. Look for `[pihole-ha]` and `[pihole-ha-ui]` lines covering options loading, UI start, Pi-hole API wait/auth, and request failures.
 
 ## Home Assistant integration
 
@@ -67,4 +233,5 @@ After DNS is working, you can also add the built-in **Pi-hole** integration poin
 
 - The official Community Pi-hole add-on is deprecated; this app packages current Pi-hole v6 with a Home Assistant Ingress UI.
 - Do not run a second DNS server on port 53 on the same host.
-- Keep a backup DNS on your router for recovery if the Home Assistant host is offline.
+- Keep a recovery plan if Home Assistant is offline (temporary public DNS on the router).
+- Devices using DNS-over-HTTPS / Private DNS bypass Pi-hole unless you block those paths on the firewall.

@@ -17,6 +17,9 @@ configuration:
   timezone:
     name: Timezone
     description: IANA timezone used for log rotation and timestamps (example America/Chicago).
+  log_level:
+    name: Log level
+    description: Verbosity for add-on and management UI logs. Use debug or trace while troubleshooting startup or Ingress errors.
 network:
   53/tcp: DNS over TCP
   53/udp: DNS over UDP
