@@ -1,0 +1,39 @@
+# Local / CI helper stack:
+# - Home Assistant Core for configuration and UI testing
+# - Optional Pi-hole add-on image build target
+#
+# Usage:
+#   docker compose -f docker-compose.ci.yml up -d homeassistant
+#   open http://127.0.0.1:8123
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: ha-ci
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./tests/ha-config:/config
+    restart: unless-stopped
+
+  # Built in GitHub Actions; useful for local image smoke tests after:
+  #   docker build -t pihole-ha:test ./pihole
+  pihole-addon:
+    image: pihole-ha:test
+    profiles: ["addon"]
+    network_mode: host
+    environment:
+      TZ: America/Chicago
+      FTLCONF_webserver_api_password: "ci-test-password"
+      FTLCONF_dns_upstreams: "1.1.1.1;1.0.0.1"
+      FTLCONF_webserver_port: "8088"
+      PIHOLE_HA_UI_PORT: "8099"
+      PIHOLE_API_BASE: "http://127.0.0.1:8088"
+      PIHOLE_HA_LOG_LEVEL: debug
+    volumes:
+      - pihole-ci-data:/data
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+volumes:
+  pihole-ci-data:

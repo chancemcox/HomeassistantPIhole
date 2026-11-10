@@ -1,0 +1,7 @@
+default_config:
+
+http:
+  server_port: 8123
+
+logger:
+  default: info
