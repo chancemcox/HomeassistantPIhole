@@ -1,9 +1,13 @@
 # Changelog
 
-## 1.6.0
+## 1.7.0
 
 - Add GitHub Actions CI with add-on lint, image build, UI smoke tests, and Home Assistant Core install for testing
 - Remove default-value keys from `config.yaml` / `build.yaml` so `frenck/action-addon-linter` passes
+
+## 1.6.0
+
+- Move native Pi-hole admin / API webserver from port `8080` to `8088`
 
 ## 1.5.0
 
