@@ -12,6 +12,7 @@ const els = {
   recentList: document.getElementById("recent-list"),
   topList: document.getElementById("top-list"),
   dnsIps: document.getElementById("dns-ips"),
+  dnsPortWarning: document.getElementById("dns-port-warning"),
   adminUrls: document.getElementById("admin-urls"),
   dnsExamples: document.getElementById("dns-examples"),
   versionLine: document.getElementById("version-line"),
@@ -181,6 +182,18 @@ async function refreshSetup() {
   const data = await api("/api/setup");
   const dnsPort = data.dns_port || 53;
   const adminPort = data.admin_port || 8088;
+
+  if (els.dnsPortWarning) {
+    if (data.dns_port_busy) {
+      els.dnsPortWarning.hidden = false;
+      els.dnsPortWarning.textContent =
+        `Pi-hole DNS is not answering on port ${dnsPort} (${data.dns_port_detail || "no response"}). ` +
+        "Another service likely owns port 53 (AdGuard, systemd-resolved, etc.). Free port 53 and restart Pi-hole.";
+    } else {
+      els.dnsPortWarning.hidden = true;
+      els.dnsPortWarning.textContent = "";
+    }
+  }
 
   els.dnsIps.innerHTML = "";
   const ips = data.dns_ips?.length ? data.dns_ips : ["Set a static IP on this host"];

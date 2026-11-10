@@ -87,7 +87,7 @@ log_info "Pi-hole config path: /etc/pihole -> $(readlink -f /etc/pihole 2>/dev/n
 PASSWORD=""
 UPSTREAM_DNS="1.1.1.1;1.0.0.1"
 DNS_LISTENING_MODE="ALL"
-INTERFACE_THEME="default"
+INTERFACE_THEME="default-auto"
 QUERY_LOGGING="true"
 TIMEZONE="America/Chicago"
 BLOCK_HULU_ADS="false"
@@ -112,9 +112,13 @@ if [[ -f "${OPTIONS_FILE}" ]]; then
   if ! DNS_LISTENING_MODE="$(jq -r '.dns_listening_mode // "ALL"' "${OPTIONS_FILE}")"; then
     die "Failed to parse dns_listening_mode from ${OPTIONS_FILE}"
   fi
-  if ! INTERFACE_THEME="$(jq -r '.interface_theme // "default"' "${OPTIONS_FILE}")"; then
+  if ! INTERFACE_THEME="$(jq -r '.interface_theme // "default-auto"' "${OPTIONS_FILE}")"; then
     die "Failed to parse interface_theme from ${OPTIONS_FILE}"
   fi
+  # Migrate legacy option values to Pi-hole v6 theme names.
+  case "${INTERFACE_THEME}" in
+    default|auto) INTERFACE_THEME="default-auto" ;;
+  esac
   if ! QUERY_LOGGING="$(jq -r '.query_logging // true' "${OPTIONS_FILE}")"; then
     die "Failed to parse query_logging from ${OPTIONS_FILE}"
   fi
@@ -158,6 +162,9 @@ export FTLCONF_dns_listeningMode="${DNS_LISTENING_MODE}"
 export FTLCONF_webserver_interface_theme="${INTERFACE_THEME}"
 export FTLCONF_dns_queryLogging="${QUERY_LOGGING}"
 export FTLCONF_webserver_port="${FTLCONF_webserver_port:-8088}"
+# HA hosts usually already run NTP; Pi-hole's NTP server collides on :123.
+export FTLCONF_ntp_ipv4_active="${FTLCONF_ntp_ipv4_active:-false}"
+export FTLCONF_ntp_ipv6_active="${FTLCONF_ntp_ipv6_active:-false}"
 export PIHOLE_HA_PASSWORD="${PASSWORD}"
 export PIHOLE_HA_UI_PORT="${PIHOLE_HA_UI_PORT:-8189}"
 export PIHOLE_API_BASE="${PIHOLE_API_BASE:-http://127.0.0.1:8088}"
@@ -212,12 +219,15 @@ elif command -v netstat >/dev/null 2>&1; then
   netstat -lntu 2>/dev/null | while read -r line; do log_debug "  ${line}"; done || true
 fi
 
-# Port 53 conflict is a common HA install failure mode.
+# Port 53 conflict is a common HA install failure mode (AdGuard, systemd-resolved,
+# another DNS container, or the host's own stub resolver).
 if command -v ss >/dev/null 2>&1; then
   if ss -lntu 2>/dev/null | grep -Eq ':53\s'; then
-    log_warn "Something is already listening on port 53; Pi-hole DNS may fail to bind"
+    log_error "Port 53 is already in use on this host — Pi-hole DNS cannot start"
+    log_error "Stop the other DNS service (AdGuard, systemd-resolved, another Pi-hole, etc.), then restart this add-on"
+    ss -lntup 2>/dev/null | grep -E ':53\s' | while read -r line; do log_error "  ${line}"; done || true
   else
-    log_debug "Port 53 appears free"
+    log_info "Port 53 appears free for Pi-hole DNS"
   fi
 fi
 

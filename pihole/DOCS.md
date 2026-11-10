@@ -257,6 +257,16 @@ DNS always listens on host port **53**. The native Pi-hole admin / API listens o
 
 If the Pi-hole sidebar shows **502 Bad Gateway** or another app (for example HomeScan), update to **1.9.3+**, fully restart Pi-hole, and confirm the add-on log says `Management UI will bind to Ingress port 8189`.
 
+### Port 53 already in use
+
+Your add-on log will show `failed to create listening socket for port 53: Address in use` if something else on the Home Assistant host already owns DNS. Common conflicts:
+
+- AdGuard Home (or another DNS add-on)
+- `systemd-resolved` / another host DNS stub
+- A second Pi-hole container
+
+Stop or reconfigure that service so port **53/udp** and **53/tcp** are free, then restart Pi-hole. Until then the management UI can still load, but network-wide DNS blocking will not work.
+
 ## Options
 
 | Option | Description |

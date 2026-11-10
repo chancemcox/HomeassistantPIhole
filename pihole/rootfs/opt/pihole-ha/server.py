@@ -264,6 +264,25 @@ def apply_preset(preset_id: str) -> dict[str, Any]:
     }
 
 
+def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
+    """Probe whether anything answers DNS on 127.0.0.1:<port> (Pi-hole should)."""
+    # Minimal DNS query (transaction 0xaaaa, A for ".")
+    query = b"\xaa\xaa\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(1.0)
+            sock.sendto(query, ("127.0.0.1", port))
+            sock.recvfrom(512)
+        return {"port": port, "busy": False, "detail": "DNS responding on 127.0.0.1"}
+    except OSError as exc:
+        log.warning("DNS port %s is not answering on 127.0.0.1: %s", port, exc)
+        return {
+            "port": port,
+            "busy": True,
+            "detail": f"no DNS response on 127.0.0.1:{port} ({exc})",
+        }
+
+
 def detect_host_ips() -> list[str]:
     ips: list[str] = []
     try:
@@ -407,11 +426,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/setup":
             ips = detect_host_ips()
             example_ip = ips[0] if ips else "192.168.1.50"
+            port_status = dns_port_status(DNS_PORT)
             self._send_json(
                 200,
                 {
                     "dns_ips": ips,
                     "dns_port": DNS_PORT,
+                    "dns_port_busy": port_status["busy"],
+                    "dns_port_detail": port_status["detail"],
                     "admin_port": ADMIN_PORT,
                     "admin_urls": [f"http://{ip}:{ADMIN_PORT}/admin" for ip in ips],
                     "example_ip": example_ip,

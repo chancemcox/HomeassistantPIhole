@@ -745,3 +745,14 @@ a.dns-chip.admin-chip:hover {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+.banner-warn {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--mdc-shape-medium);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
