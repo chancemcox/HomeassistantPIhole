@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0
+
+- Add DNS traffic panel with 24-hour chart, live query log, and top clients
+
 ## 1.2.0
 
 - Add curated **Hulu ads** streaming preset (exact + regex deny list)
