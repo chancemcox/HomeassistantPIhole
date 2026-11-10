@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,12 +21,24 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8080").rstrip("/")
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
 UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8099"))
+LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
+ALLOWED_DOMAIN_FILTERS = {
+    "allow/exact",
+    "allow/regex",
+    "deny/exact",
+    "deny/regex",
+}
+ALLOWED_TYPES = {"allow", "deny"}
+ALLOWED_KINDS = {"exact", "regex"}
+
 _session_lock = threading.Lock()
 _session: dict[str, Any] = {"sid": None, "expires": 0.0}
 
-
-def log(message: str) -> None:
-    print(f"[pihole-ha-ui] {message}", flush=True)
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL_NAME, logging.INFO),
+    format="[pihole-ha-ui] %(levelname)s %(message)s",
+)
+log = logging.getLogger("pihole-ha-ui")
 
 
 def wait_for_pihole(timeout: int = 120) -> bool:
@@ -35,17 +49,21 @@ def wait_for_pihole(timeout: int = 120) -> bool:
         parsed = urllib.parse.urlparse(API_BASE)
         host = parsed.hostname or host
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to parse API_BASE=%s: %s", API_BASE, exc)
 
+    log.info("Waiting for Pi-hole API at %s:%s (timeout=%ss)", host, port, timeout)
+    attempt = 0
     while time.time() < deadline:
+        attempt += 1
         try:
             with socket.create_connection((host, port), timeout=2):
-                log(f"Pi-hole API is reachable at {host}:{port}")
+                log.info("Pi-hole API reachable at %s:%s after %s attempt(s)", host, port, attempt)
                 return True
-        except OSError:
+        except OSError as exc:
+            log.debug("Pi-hole API not ready yet (attempt %s): %s", attempt, exc)
             time.sleep(1)
-    log("Timed out waiting for Pi-hole API")
+    log.error("Timed out waiting for Pi-hole API at %s:%s", host, port)
     return False
 
 
@@ -60,12 +78,18 @@ def api_request(
     data = None
     headers = {"Accept": "application/json"}
     if body is not None:
+        # Never log password values.
+        safe_body = {k: ("***" if "password" in k.lower() else v) for k, v in body.items()}
+        log.debug("API %s %s body=%s", method, path, safe_body)
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    else:
+        log.debug("API %s %s", method, path)
     if sid:
         headers["X-FTL-SID"] = sid
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    started = time.time()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
@@ -78,6 +102,8 @@ def api_request(
                     payload = json.loads(raw.decode("utf-8"))
                 else:
                     payload = raw.decode("utf-8", errors="replace")
+            elapsed_ms = int((time.time() - started) * 1000)
+            log.debug("API %s %s -> %s (%sms)", method, path, response.status, elapsed_ms)
             return response.status, payload, dict(response.headers)
     except urllib.error.HTTPError as exc:
         raw = exc.read()
@@ -85,32 +111,40 @@ def api_request(
             payload = json.loads(raw.decode("utf-8")) if raw else {"error": str(exc)}
         except json.JSONDecodeError:
             payload = {"error": raw.decode("utf-8", errors="replace")}
+        elapsed_ms = int((time.time() - started) * 1000)
+        log.warning("API %s %s -> HTTP %s (%sms): %s", method, path, exc.code, elapsed_ms, payload)
         return exc.code, payload, dict(exc.headers)
     except urllib.error.URLError as exc:
+        elapsed_ms = int((time.time() - started) * 1000)
+        log.error("API %s %s unreachable after %sms: %s", method, path, elapsed_ms, exc.reason)
         return 502, {"error": f"Pi-hole unreachable: {exc.reason}"}, {}
+    except Exception as exc:  # noqa: BLE001
+        log.exception("API %s %s unexpected failure: %s", method, path, exc)
+        return 500, {"error": str(exc)}, {}
 
 
 def authenticate(force: bool = False) -> str | None:
     with _session_lock:
         now = time.time()
         if not force and _session["sid"] and now < _session["expires"] - 30:
+            log.debug("Reusing Pi-hole session (expires_in=%.0fs)", _session["expires"] - now)
             return _session["sid"]
 
+        log.info("Authenticating with Pi-hole API (force=%s, password_set=%s)", force, bool(PASSWORD))
         status, payload, _ = api_request(
             "POST",
             "/api/auth",
             {"password": PASSWORD} if PASSWORD else {},
         )
         if status >= 400 or not isinstance(payload, dict):
-            log(f"Auth failed ({status}): {payload}")
+            log.error("Auth failed (%s): %s", status, payload)
             _session["sid"] = None
             return None
 
         session = payload.get("session") or {}
         if not session.get("valid") and PASSWORD:
-            # Empty password installs may still return a usable session.
             if not session.get("sid"):
-                log(f"Auth rejected: {payload}")
+                log.error("Auth rejected: %s", payload)
                 _session["sid"] = None
                 return None
 
@@ -118,6 +152,7 @@ def authenticate(force: bool = False) -> str | None:
         validity = float(session.get("validity") or 1800)
         _session["sid"] = sid
         _session["expires"] = now + validity
+        log.info("Authenticated with Pi-hole (validity=%ss)", int(validity))
         return sid
 
 
@@ -128,8 +163,11 @@ def authed_request(
     timeout: float = 30.0,
 ) -> tuple[int, Any]:
     sid = authenticate()
+    if not sid and PASSWORD:
+        log.warning("No SID available before %s %s", method, path)
     status, payload, _ = api_request(method, path, body, sid=sid, timeout=timeout)
     if status == 401:
+        log.info("Got 401 for %s %s; forcing re-auth", method, path)
         sid = authenticate(force=True)
         status, payload, _ = api_request(method, path, body, sid=sid, timeout=timeout)
     return status, payload
@@ -143,8 +181,9 @@ def detect_host_ips() -> list[str]:
             ip = sock.getsockname()[0]
             if ip and not ip.startswith("127."):
                 ips.append(ip)
-    except OSError:
-        pass
+                log.debug("Detected primary egress IP: %s", ip)
+    except OSError as exc:
+        log.debug("Could not detect egress IP: %s", exc)
 
     try:
         hostname = socket.gethostname()
@@ -152,28 +191,30 @@ def detect_host_ips() -> list[str]:
             candidate = info[4][0]
             if candidate not in ips and not candidate.startswith("127."):
                 ips.append(candidate)
-    except OSError:
-        pass
+                log.debug("Detected hostname IP: %s", candidate)
+    except OSError as exc:
+        log.debug("Could not resolve hostname IPs: %s", exc)
+    log.info("DNS setup IPs: %s", ips or ["<none detected>"])
     return ips
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PiHoleHAUI/1.0"
+    server_version = "PiHoleHAUI/1.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        log(f"{self.address_string()} {fmt % args}")
+        log.info("%s %s", self.address_string(), fmt % args)
 
     def _client_allowed(self) -> bool:
-        # Prefer Ingress identity header when present.
-        if self.headers.get("X-Hass-Source") == "core.ingress":
-            return True
+        # Peer address only — do not trust spoofable ingress headers on host_network.
         host = self.client_address[0]
-        # Only Supervisor ingress + local loopback. Do not expose the panel on the LAN.
-        if host in {"127.0.0.1", "::1", "localhost", "172.30.32.2"}:
-            return True
-        if host.startswith("172.30.32."):
-            return True
-        return False
+        allowed = host in {"127.0.0.1", "::1", "localhost", "172.30.32.2"} or host.startswith(
+            "172.30.32."
+        )
+        if not allowed:
+            log.warning("Rejected client %s for %s %s", host, self.command, self.path)
+        else:
+            log.debug("Allowed client %s for %s %s", host, self.command, self.path)
+        return allowed
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -185,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, payload: Any) -> None:
         body = json.dumps(payload).encode("utf-8")
+        log.debug("Response %s (%s bytes)", status, len(body))
         self._send(status, body, "application/json; charset=utf-8")
 
     def _read_json(self) -> dict[str, Any]:
@@ -202,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_static(self, rel: str) -> None:
         target = (STATIC_DIR / rel).resolve()
         if not str(target).startswith(str(STATIC_DIR.resolve())) or not target.is_file():
+            log.warning("Static file missing or path escape blocked: %s", rel)
             self._send_json(404, {"error": "Not found"})
             return
         suffix = target.suffix.lower()
@@ -213,15 +256,24 @@ class Handler(BaseHTTPRequestHandler):
             ".png": "image/png",
             ".ico": "image/x-icon",
         }
+        log.debug("Serving static file %s", target.name)
         self._send(200, target.read_bytes(), content_types.get(suffix, "application/octet-stream"))
 
     def do_GET(self) -> None:  # noqa: N802
+        try:
+            self._do_GET()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Unhandled GET error for %s: %s\n%s", self.path, exc, traceback.format_exc())
+            self._send_json(500, {"error": "Internal server error", "detail": str(exc)})
+
+    def _do_GET(self) -> None:
         if not self._client_allowed():
             self._send_json(403, {"error": "Forbidden"})
             return
 
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        log.debug("GET path=%s query=%s", path, parsed.query)
 
         if path in {"/", "/index.html"}:
             self._serve_static("index.html")
@@ -230,24 +282,46 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_static(path[len("/static/") :])
             return
         if path == "/api/health":
-            self._send_json(200, {"ok": True, "service": "pihole-ha-ui"})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "service": "pihole-ha-ui",
+                    "log_level": LOG_LEVEL_NAME.lower(),
+                    "api_base": API_BASE,
+                },
+            )
             return
         if path == "/api/overview":
             self._handle_overview()
             return
         if path == "/api/domains":
             kind = urllib.parse.parse_qs(parsed.query).get("filter", ["deny/exact"])[0]
+            if kind not in ALLOWED_DOMAIN_FILTERS:
+                log.warning("Rejected invalid domain filter: %s", kind)
+                self._send_json(
+                    400,
+                    {
+                        "error": "Invalid filter",
+                        "allowed": sorted(ALLOWED_DOMAIN_FILTERS),
+                    },
+                )
+                return
             status, payload = authed_request("GET", f"/api/domains/{kind}")
             self._send_json(status, payload)
             return
         if path == "/api/setup":
+            ips = detect_host_ips()
+            example_ip = ips[0] if ips else "192.168.1.50"
             self._send_json(
                 200,
                 {
-                    "dns_ips": detect_host_ips(),
+                    "dns_ips": ips,
                     "dns_port": 53,
                     "admin_port": 8080,
+                    "example_ip": example_ip,
                     "upstream_hint": "Point your router DHCP DNS to one of these addresses.",
+                    "examples": build_dns_examples(example_ip),
                 },
             )
             return
@@ -255,23 +329,37 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        try:
+            self._do_POST()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Unhandled POST error for %s: %s\n%s", self.path, exc, traceback.format_exc())
+            self._send_json(500, {"error": "Internal server error", "detail": str(exc)})
+
+    def _do_POST(self) -> None:
         if not self._client_allowed():
             self._send_json(403, {"error": "Forbidden"})
             return
 
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        log.debug("POST path=%s", path)
 
         try:
             body = self._read_json()
         except (json.JSONDecodeError, ValueError) as exc:
+            log.warning("Invalid JSON body on %s: %s", path, exc)
             self._send_json(400, {"error": str(exc)})
             return
 
         if path == "/api/blocking":
-            payload = {"blocking": bool(body.get("blocking", True))}
+            payload: dict[str, Any] = {"blocking": bool(body.get("blocking", True))}
             if body.get("timer") is not None:
-                payload["timer"] = int(body["timer"])
+                try:
+                    payload["timer"] = int(body["timer"])
+                except (TypeError, ValueError):
+                    self._send_json(400, {"error": "timer must be an integer number of seconds"})
+                    return
+            log.info("Setting blocking=%s timer=%s", payload.get("blocking"), payload.get("timer"))
             status, result = authed_request("POST", "/api/dns/blocking", payload)
             self._send_json(status, result)
             return
@@ -284,23 +372,37 @@ class Handler(BaseHTTPRequestHandler):
             if not domain:
                 self._send_json(400, {"error": "domain is required"})
                 return
+            if list_type not in ALLOWED_TYPES or kind not in ALLOWED_KINDS:
+                self._send_json(
+                    400,
+                    {
+                        "error": "Invalid type/kind",
+                        "allowed_types": sorted(ALLOWED_TYPES),
+                        "allowed_kinds": sorted(ALLOWED_KINDS),
+                    },
+                )
+                return
             post_body: dict[str, Any] = {"domain": domain, "enabled": True}
             if comment:
                 post_body["comment"] = comment
+            log.info("Adding domain type=%s kind=%s domain=%s", list_type, kind, domain)
             status, result = authed_request("POST", f"/api/domains/{list_type}/{kind}", post_body)
             self._send_json(status, result)
             return
 
         if path == "/api/gravity":
+            log.info("Starting gravity update")
             status, result = authed_request("POST", "/api/action/gravity", timeout=600.0)
-            # Gravity streams text; normalize for the UI.
             if isinstance(result, str):
+                log.info("Gravity finished status=%s output_chars=%s", status, len(result))
                 self._send_json(status, {"ok": status < 400, "output": result[-4000:]})
             else:
+                log.info("Gravity finished status=%s payload=%s", status, result)
                 self._send_json(status, result)
             return
 
         if path == "/api/flush-logs":
+            log.info("Flushing query logs")
             status, result = authed_request("POST", "/api/action/flush/logs")
             self._send_json(status, result)
             return
@@ -308,18 +410,30 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        try:
+            self._do_DELETE()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Unhandled DELETE error for %s: %s\n%s", self.path, exc, traceback.format_exc())
+            self._send_json(500, {"error": "Internal server error", "detail": str(exc)})
+
+    def _do_DELETE(self) -> None:
         if not self._client_allowed():
             self._send_json(403, {"error": "Forbidden"})
             return
 
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        log.debug("DELETE path=%s", path)
         if path.startswith("/api/domains/"):
             remainder = path[len("/api/domains/") :]
             parts = remainder.split("/")
             if len(parts) >= 3:
                 list_type, kind, domain = parts[0], parts[1], "/".join(parts[2:])
                 domain = urllib.parse.unquote(domain)
+                if list_type not in ALLOWED_TYPES or kind not in ALLOWED_KINDS:
+                    self._send_json(400, {"error": "Invalid type/kind"})
+                    return
+                log.info("Deleting domain type=%s kind=%s domain=%s", list_type, kind, domain)
                 status, result = authed_request(
                     "DELETE",
                     f"/api/domains/{list_type}/{kind}/{urllib.parse.quote(domain, safe='')}",
@@ -333,6 +447,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def _handle_overview(self) -> None:
+        log.debug("Building overview payload")
         status_summary, summary = authed_request("GET", "/api/stats/summary")
         status_blocking, blocking = authed_request("GET", "/api/dns/blocking")
         status_version, version = authed_request("GET", "/api/info/version")
@@ -340,6 +455,15 @@ class Handler(BaseHTTPRequestHandler):
         status_recent, recent = authed_request("GET", "/api/stats/recent_blocked?count=8")
 
         healthy = status_summary < 400 and status_blocking < 400
+        log.info(
+            "Overview healthy=%s summary=%s blocking=%s version=%s top=%s recent=%s",
+            healthy,
+            status_summary,
+            status_blocking,
+            status_version,
+            status_top,
+            status_recent,
+        )
         self._send_json(
             200 if healthy else 503,
             {
@@ -357,11 +481,103 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+def build_dns_examples(ip: str) -> list[dict[str, str]]:
+    return [
+        {
+            "title": "Router DHCP (recommended)",
+            "steps": (
+                f"Open your router admin page → LAN / DHCP settings. "
+                f"Set Primary DNS to {ip}. Leave Secondary empty or set a backup only if needed. "
+                f"Save, then renew leases on clients."
+            ),
+        },
+        {
+            "title": "Quick test on one device",
+            "steps": (
+                f"Before changing the whole network, set only one device DNS to {ip}. "
+                f"Browse a site with ads and confirm blocks appear in the Pi-hole panel."
+            ),
+        },
+        {
+            "title": "Windows 11",
+            "steps": (
+                f"Settings → Network & internet → your adapter → DNS server assignment → Edit. "
+                f"Choose Manual, enable IPv4, set Preferred DNS to {ip}, save."
+            ),
+        },
+        {
+            "title": "macOS",
+            "steps": (
+                f"System Settings → Network → your interface → Details → DNS. "
+                f"Click + and add {ip}. Apply, then flush with: sudo dscacheutil -flushcache"
+            ),
+        },
+        {
+            "title": "iPhone / iPad",
+            "steps": (
+                f"Settings → Wi-Fi → tap the info icon → Configure DNS → Manual. "
+                f"Remove existing servers and add {ip}."
+            ),
+        },
+        {
+            "title": "Android",
+            "steps": (
+                f"Settings → Network & internet → Internet → your Wi-Fi → pencil/edit → Advanced → DNS. "
+                f"Choose Private DNS off / static IP mode if needed, then set DNS 1 to {ip}."
+            ),
+        },
+        {
+            "title": "Linux (NetworkManager)",
+            "steps": (
+                f"nmcli connection modify '<connection>' ipv4.dns \"{ip}\" "
+                f"ipv4.ignore-auto-dns yes && nmcli connection up '<connection>'"
+            ),
+        },
+        {
+            "title": "UniFi Network",
+            "steps": (
+                f"UniFi Network → Settings → Networks → your LAN → DHCP Service Management. "
+                f"Set DHCP DNS Server to {ip}. Apply changes and reconnect clients."
+            ),
+        },
+        {
+            "title": "pfSense / OPNsense",
+            "steps": (
+                f"Services → DHCP Server → your LAN. Set DNS Server to {ip}. "
+                f"Under General Setup, avoid forcing different DNS unless intentional. Apply."
+            ),
+        },
+        {
+            "title": "Verify with dig / nslookup",
+            "steps": (
+                f"dig @{ip} doubleclick.net +short   # often returns 0.0.0.0 when blocked\n"
+                f"nslookup pi.hole {ip}              # should resolve to your Pi-hole host"
+            ),
+        },
+    ]
+
+
 def main() -> None:
-    wait_for_pihole()
-    authenticate(force=True)
+    log.info(
+        "Starting management UI log_level=%s api_base=%s ui_port=%s password_set=%s",
+        LOG_LEVEL_NAME.lower(),
+        API_BASE,
+        UI_PORT,
+        bool(PASSWORD),
+    )
+    ready = wait_for_pihole()
+    if not ready:
+        log.error("Continuing without confirmed Pi-hole API readiness; requests may fail until it starts")
+    sid = authenticate(force=True)
+    if sid:
+        log.info("Initial Pi-hole session established")
+    else:
+        log.warning("Initial Pi-hole authentication failed; will retry on demand")
+
+    # Bind all interfaces so Home Assistant Ingress can reach us with host_network.
+    # Access is still restricted by peer IP allow-list.
     server = ThreadingHTTPServer(("0.0.0.0", UI_PORT), Handler)
-    log(f"Management UI listening on 0.0.0.0:{UI_PORT}")
+    log.info("Management UI listening on 0.0.0.0:%s", UI_PORT)
     server.serve_forever()
 
 

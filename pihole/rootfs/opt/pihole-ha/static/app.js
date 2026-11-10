@@ -12,6 +12,7 @@ const els = {
   recentList: document.getElementById("recent-list"),
   topList: document.getElementById("top-list"),
   dnsIps: document.getElementById("dns-ips"),
+  dnsExamples: document.getElementById("dns-examples"),
   versionLine: document.getElementById("version-line"),
   actionLog: document.getElementById("action-log"),
   domainForm: document.getElementById("domain-form"),
@@ -25,6 +26,7 @@ function fmt(n) {
 }
 
 async function api(path, options = {}) {
+  console.debug("[pihole-ui] request", path, options.method || "GET");
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
@@ -38,6 +40,7 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     const message = data?.error?.message || data?.error || data?.raw || response.statusText;
+    console.error("[pihole-ui] request failed", path, response.status, message);
     throw new Error(message);
   }
   return data;
@@ -70,17 +73,45 @@ function renderList(target, items, emptyText) {
     if (typeof item === "string") {
       li.textContent = item;
     } else if (item.domain && item.count !== undefined) {
-      li.innerHTML = `<span>${item.domain}</span><span>${fmt(item.count)}</span>`;
+      const domain = document.createElement("span");
+      domain.textContent = item.domain;
+      const count = document.createElement("span");
+      count.textContent = fmt(item.count);
+      li.append(domain, count);
     } else if (item.domain) {
       const label = document.createElement("span");
       label.textContent = item.domain;
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "Remove";
-      remove.addEventListener("click", () => removeDomain(item));
+      remove.addEventListener("click", () => {
+        removeDomain(item).catch((error) => showLog(`Remove failed: ${error.message}`));
+      });
       li.append(label, remove);
     }
     target.appendChild(li);
+  }
+}
+
+function renderDnsExamples(examples) {
+  els.dnsExamples.innerHTML = "";
+  if (!examples?.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "DNS examples unavailable.";
+    els.dnsExamples.appendChild(empty);
+    return;
+  }
+
+  for (const example of examples) {
+    const details = document.createElement("details");
+    details.className = "dns-example";
+    const summary = document.createElement("summary");
+    summary.textContent = example.title || "Example";
+    const body = document.createElement("p");
+    body.textContent = example.steps || "";
+    details.append(summary, body);
+    els.dnsExamples.appendChild(details);
   }
 }
 
@@ -133,13 +164,18 @@ async function refreshSetup() {
     chip.textContent = `${ip}:${data.dns_port || 53}`;
     els.dnsIps.appendChild(chip);
   }
+  renderDnsExamples(data.examples || []);
 }
 
 async function setBlocking(blocking, timer) {
-  const body = { blocking };
-  if (timer !== undefined) body.timer = timer;
-  await api("/api/blocking", { method: "POST", body: JSON.stringify(body) });
-  await refreshOverview();
+  try {
+    const body = { blocking };
+    if (timer !== undefined) body.timer = timer;
+    await api("/api/blocking", { method: "POST", body: JSON.stringify(body) });
+    await refreshOverview();
+  } catch (error) {
+    showLog(`Blocking change failed: ${error.message}`);
+  }
 }
 
 function showLog(text) {
@@ -178,16 +214,20 @@ els.domainForm.addEventListener("submit", async (event) => {
   const domain = els.domainInput.value.trim();
   const type = els.domainType.value;
   if (!domain) return;
-  await api("/api/domains", {
-    method: "POST",
-    body: JSON.stringify({ domain, type, kind: "exact" }),
-  });
-  els.domainInput.value = "";
-  state.filter = `${type}/exact`;
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.classList.toggle("is-active", tab.dataset.filter === state.filter);
-  });
-  await refreshDomains();
+  try {
+    await api("/api/domains", {
+      method: "POST",
+      body: JSON.stringify({ domain, type, kind: "exact" }),
+    });
+    els.domainInput.value = "";
+    state.filter = `${type}/exact`;
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.classList.toggle("is-active", tab.dataset.filter === state.filter);
+    });
+    await refreshDomains();
+  } catch (error) {
+    showLog(`Add domain failed: ${error.message}`);
+  }
 });
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -195,7 +235,11 @@ document.querySelectorAll(".tab").forEach((tab) => {
     state.filter = tab.dataset.filter;
     document.querySelectorAll(".tab").forEach((node) => node.classList.remove("is-active"));
     tab.classList.add("is-active");
-    await refreshDomains();
+    try {
+      await refreshDomains();
+    } catch (error) {
+      showLog(`Load domains failed: ${error.message}`);
+    }
   });
 });
 
@@ -206,6 +250,7 @@ async function refreshAll() {
     els.badge.classList.remove("is-on", "is-off");
     els.badge.classList.add("is-loading");
     els.badge.textContent = `Waiting for Pi-hole… (${error.message})`;
+    showLog(`Refresh failed: ${error.message}`);
   }
 }
 

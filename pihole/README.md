@@ -7,6 +7,6 @@ Home Assistant app that installs Pi-hole v6 as a network-wide ad-blocking DNS se
 1. Add this repository in the Home Assistant add-on store.
 2. Install and start **Pi-hole**.
 3. Open it from the sidebar.
-4. Point your router DHCP DNS at the Home Assistant host IP.
+4. Point your router DHCP DNS at the Home Assistant host IP, or follow the device-specific DNS examples in the panel / docs.
 
-See [DOCS.md](./DOCS.md) for full setup details.
+See [DOCS.md](./DOCS.md) for router, Windows, macOS, iOS, Android, Linux, UniFi, and pfSense/OPNsense examples.
