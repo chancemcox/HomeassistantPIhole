@@ -371,6 +371,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/overview":
             self._handle_overview()
             return
+        if path == "/api/traffic":
+            self._handle_traffic(parsed.query)
+            return
         if path == "/api/domains":
             kind = urllib.parse.parse_qs(parsed.query).get("filter", ["deny/exact"])[0]
             if kind not in ALLOWED_DOMAIN_FILTERS:
@@ -581,6 +584,55 @@ class Handler(BaseHTTPRequestHandler):
                 "errors": {
                     "summary": summary if status_summary >= 400 else None,
                     "blocking": blocking if status_blocking >= 400 else None,
+                },
+            },
+        )
+
+    def _handle_traffic(self, query: str) -> None:
+        params = urllib.parse.parse_qs(query)
+        try:
+            length = max(1, min(int((params.get("length") or ["40"])[0]), 200))
+        except (TypeError, ValueError):
+            length = 40
+
+        log.debug("Building traffic payload length=%s", length)
+        status_history, history = authed_request("GET", "/api/history")
+        status_clients, top_clients = authed_request("GET", "/api/stats/top_clients?count=8")
+        status_queries, queries = authed_request("GET", f"/api/queries?length={length}")
+        status_upstreams, upstreams = authed_request("GET", "/api/stats/upstreams")
+
+        history_rows = []
+        if status_history < 400 and isinstance(history, dict):
+            history_rows = history.get("history") or []
+
+        totals = {"total": 0, "blocked": 0, "cached": 0, "forwarded": 0}
+        for row in history_rows:
+            if not isinstance(row, dict):
+                continue
+            for key in totals:
+                try:
+                    totals[key] += int(row.get(key) or 0)
+                except (TypeError, ValueError):
+                    continue
+
+        query_rows = []
+        if status_queries < 400 and isinstance(queries, dict):
+            query_rows = queries.get("queries") or []
+
+        healthy = status_history < 400
+        self._send_json(
+            200 if healthy else 503,
+            {
+                "healthy": healthy,
+                "history": history_rows if status_history < 400 else [],
+                "totals_24h": totals,
+                "top_clients": top_clients if status_clients < 400 else None,
+                "queries": query_rows if status_queries < 400 else [],
+                "upstreams": upstreams if status_upstreams < 400 else None,
+                "errors": {
+                    "history": history if status_history >= 400 else None,
+                    "queries": queries if status_queries >= 400 else None,
+                    "clients": top_clients if status_clients >= 400 else None,
                 },
             },
         )

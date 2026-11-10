@@ -50,6 +50,68 @@
         </article>
       </section>
 
+      <section class="panel traffic-panel" aria-labelledby="traffic-title">
+        <div class="panel-head traffic-head">
+          <div>
+            <h2 id="traffic-title">DNS traffic</h2>
+            <p>Live 24-hour query volume plus the newest DNS lookups on your network.</p>
+          </div>
+          <div class="traffic-legend" aria-hidden="true">
+            <span><i class="swatch total"></i>Total</span>
+            <span><i class="swatch blocked"></i>Blocked</span>
+            <span><i class="swatch forwarded"></i>Forwarded</span>
+          </div>
+        </div>
+        <div class="traffic-stats" aria-label="24 hour traffic totals">
+          <div>
+            <span class="metric-label">24h total</span>
+            <strong id="traffic-total">—</strong>
+          </div>
+          <div>
+            <span class="metric-label">24h blocked</span>
+            <strong id="traffic-blocked">—</strong>
+          </div>
+          <div>
+            <span class="metric-label">24h cached</span>
+            <strong id="traffic-cached">—</strong>
+          </div>
+          <div>
+            <span class="metric-label">24h forwarded</span>
+            <strong id="traffic-forwarded">—</strong>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="traffic-chart" viewBox="0 0 1000 280" role="img" aria-label="DNS traffic over the last 24 hours"></svg>
+          <p id="traffic-empty" class="empty chart-empty" hidden>No traffic history yet. Point devices at Pi-hole DNS and wait a few minutes.</p>
+        </div>
+        <div class="traffic-columns">
+          <div>
+            <div class="panel-head secondary">
+              <h3>Live queries</h3>
+            </div>
+            <div class="query-table-wrap">
+              <table class="query-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Domain</th>
+                    <th>Client</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody id="query-log"></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <div class="panel-head secondary">
+              <h3>Top talkers</h3>
+            </div>
+            <ul id="top-clients" class="plain-list"></ul>
+          </div>
+        </div>
+      </section>
+
       <div class="panels">
         <section class="panel" aria-labelledby="streaming-title">
           <div class="panel-head">
