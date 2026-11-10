@@ -11,7 +11,8 @@ RUN apk add --no-cache \
 COPY rootfs /
 
 RUN chmod a+x /ha-entrypoint.sh \
-    && chmod a+x /opt/pihole-ha/server.py
+    && chmod a+x /opt/pihole-ha/server.py \
+    && chmod a+x /opt/pihole-ha/resolve_ingress_port.py
 
 ENV FTLCONF_webserver_port="8088" \
     FTLCONF_dns_listeningMode="ALL" \

@@ -152,37 +152,24 @@ resolve_ingress_ui_port() {
   # With host_network + ingress_port: 0, Supervisor assigns a free high port.
   # Bind the management UI there so the Pi-hole sidebar does not land on another
   # host-network app that still owns fixed 8099 (for example HomeScan).
-  if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
-    local resolved
-    resolved="$(
-      python3 - <<'PY' 2>/dev/null || true
-import json
-import os
-import urllib.request
-
-token = os.environ.get("SUPERVISOR_TOKEN", "")
-req = urllib.request.Request(
-    "http://supervisor/addons/self/info",
-    headers={"Authorization": f"Bearer {token}"},
-)
-try:
-    with urllib.request.urlopen(req, timeout=5) as response:
-        payload = json.load(response)
-except Exception:
-    raise SystemExit(0)
-
-data = payload.get("data") or payload
-port = data.get("ingress_port")
-if isinstance(port, int) and port > 0:
-    print(port)
-PY
-    )"
-    if [[ -n "${resolved}" ]]; then
-      log_info "Resolved Supervisor ingress_port=${resolved}"
-      printf '%s' "${resolved}"
-      return 0
-    fi
-    log_warn "Could not read Supervisor ingress_port; falling back"
+  #
+  # On host_network the Docker DNS name "supervisor" often does not resolve, so
+  # prefer the Supervisor IP 172.30.32.2. Never fall back to 8099 when we are
+  # running under Supervisor — that causes Ingress 502 Bad Gateway.
+  if [[ -n "${SUPERVISOR_TOKEN:-}" || -n "${HASSIO_TOKEN:-}" ]]; then
+    local attempt resolved
+    for attempt in 1 2 3 4 5 6 7 8; do
+      if resolved="$(python3 /opt/pihole-ha/resolve_ingress_port.py 2>/tmp/pihole-ingress-resolve.err)"; then
+        if [[ -n "${resolved}" ]]; then
+          log_info "Resolved Supervisor ingress_port=${resolved} (attempt ${attempt})"
+          printf '%s' "${resolved}"
+          return 0
+        fi
+      fi
+      log_warn "Supervisor ingress_port not ready yet (attempt ${attempt}/8): $(tr '\n' ' ' </tmp/pihole-ingress-resolve.err 2>/dev/null || true)"
+      sleep 1
+    done
+    die "Could not resolve Supervisor ingress_port under host_network; refusing to bind 8099 (that causes Ingress 502)"
   fi
 
   if [[ -n "${PIHOLE_HA_UI_PORT:-}" ]]; then
@@ -191,7 +178,7 @@ PY
     return 0
   fi
 
-  log_debug "No Supervisor ingress port; defaulting management UI to 8099"
+  log_debug "No Supervisor token; defaulting management UI to 8099 for local/dev"
   printf '%s' "8099"
 }
 

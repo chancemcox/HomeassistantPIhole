@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# CI smoke: compile helpers, resolve ingress port, and prove the management page HTML shows.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -6,7 +7,8 @@ cd "${ROOT}"
 
 python3 -m py_compile \
   pihole/rootfs/opt/pihole-ha/server.py \
-  pihole/rootfs/opt/pihole-ha/presets.py
+  pihole/rootfs/opt/pihole-ha/presets.py \
+  pihole/rootfs/opt/pihole-ha/resolve_ingress_port.py
 
 python3 <<'PY'
 import importlib.util
@@ -14,13 +16,16 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
+ROOT = Path(".").resolve()
 store = {"domains": []}
 
 
-class Fake(BaseHTTPRequestHandler):
+class FakePiHole(BaseHTTPRequestHandler):
     def log_message(self, *args):
         return
 
@@ -67,9 +72,55 @@ class Fake(BaseHTTPRequestHandler):
         return self._json(404, {"error": "missing"})
 
 
-fake = HTTPServer(("127.0.0.1", 18080), Fake)
+class FakeSupervisor(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):
+        if self.path == "/addons/self/info":
+            auth = self.headers.get("Authorization", "")
+            if auth != "Bearer test-token":
+                body = b'{"result":"error"}'
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = json.dumps({"data": {"ingress_port": 62451, "ingress": True}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
+
+
+fake = HTTPServer(("127.0.0.1", 18080), FakePiHole)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 
+supervisor = HTTPServer(("127.0.0.1", 18081), FakeSupervisor)
+threading.Thread(target=supervisor.serve_forever, daemon=True).start()
+
+# --- Ingress port resolver (must prefer Supervisor-assigned port, never silent 8099) ---
+spec_resolve = importlib.util.spec_from_file_location(
+    "resolve_ingress_port",
+    ROOT / "pihole/rootfs/opt/pihole-ha/resolve_ingress_port.py",
+)
+resolve_mod = importlib.util.module_from_spec(spec_resolve)
+assert spec_resolve.loader is not None
+spec_resolve.loader.exec_module(resolve_mod)
+
+resolved = resolve_mod.resolve_ingress_port(
+    token="test-token",
+    bases=["http://127.0.0.1:18081"],
+)
+assert resolved == 62451, resolved
+print(f"Ingress port resolver OK -> {resolved}")
+
+# --- Management UI page must render ---
 os.environ.update(
     PIHOLE_API_BASE="http://127.0.0.1:18080",
     PIHOLE_HA_PASSWORD="secret",
@@ -80,24 +131,65 @@ os.environ.update(
 
 spec = importlib.util.spec_from_file_location(
     "server",
-    "pihole/rootfs/opt/pihole-ha/server.py",
+    ROOT / "pihole/rootfs/opt/pihole-ha/server.py",
 )
 mod = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(mod)
 mod.wait_for_pihole = lambda timeout=120: True
 threading.Thread(target=mod.main, daemon=True).start()
-time.sleep(0.5)
 
-with urllib.request.urlopen("http://127.0.0.1:18099/api/health", timeout=5) as response:
-    health = json.load(response)
-    assert health.get("ok") is True, health
+deadline = time.time() + 10
+last_error = None
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:18099/api/health", timeout=2) as response:
+            health = json.load(response)
+            if health.get("ok") is True:
+                break
+            last_error = health
+    except Exception as exc:  # noqa: BLE001
+        last_error = exc
+        time.sleep(0.2)
+else:
+    raise AssertionError(f"UI health never became ready: {last_error}")
 
 with urllib.request.urlopen("http://127.0.0.1:18099/api/setup", timeout=5) as response:
     setup = json.load(response)
     assert setup.get("dns_port") == 53, setup
     assert setup.get("admin_port") == 18080, setup
     assert isinstance(setup.get("admin_urls"), list), setup
+
+# Prove the actual page shows (this is what Ingress users see; empty/502 must fail CI).
+with urllib.request.urlopen("http://127.0.0.1:18099/", timeout=5) as response:
+    assert response.status == 200, response.status
+    content_type = response.headers.get("Content-Type", "")
+    html = response.read().decode("utf-8", errors="replace")
+
+assert "text/html" in content_type, content_type
+assert "502" not in html[:200], html[:200]
+assert "Bad Gateway" not in html, html[:300]
+assert "<title>Pi-hole</title>" in html, html[:500]
+assert 'class="brand">Pi-hole</h1>' in html or ">Pi-hole<" in html, html[:800]
+assert 'id="traffic-title"' in html, "traffic panel missing from page"
+assert 'id="setup-title"' in html, "DNS setup panel missing from page"
+assert 'id="dns-ips"' in html and 'id="admin-urls"' in html, "port chips missing from page"
+assert 'src="/static/app.js"' in html, html[:500]
+assert 'href="/static/styles.css"' in html, html[:500]
+print("Management page HTML OK")
+
+with urllib.request.urlopen("http://127.0.0.1:18099/static/app.js", timeout=5) as response:
+    js = response.read().decode("utf-8", errors="replace")
+    assert response.status == 200
+    assert "refreshSetup" in js
+    assert "admin_port" in js or "adminUrls" in js
+print("static/app.js OK")
+
+with urllib.request.urlopen("http://127.0.0.1:18099/static/styles.css", timeout=5) as response:
+    css = response.read().decode("utf-8", errors="replace")
+    assert response.status == 200
+    assert ".brand" in css
+print("static/styles.css OK")
 
 req = urllib.request.Request(
     "http://127.0.0.1:18099/api/presets/hulu-ads/apply",
@@ -110,5 +202,5 @@ with urllib.request.urlopen(req, timeout=10) as response:
     assert data.get("ok") is True, data
     assert len(data.get("added", [])) >= 1, data
 
-print("UI smoke test passed")
+print("UI smoke test passed (page shows)")
 PY

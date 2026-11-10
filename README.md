@@ -43,8 +43,8 @@ Full walkthrough with multiple examples: [`pihole/DOCS.md`](./pihole/DOCS.md).
 Pull requests and pushes to `main` run `.github/workflows/ci.yaml`, which:
 
 1. Lints the add-on config (`frenck/action-addon-linter`)
-2. Smoke-tests the management UI bridge
-3. Builds the Pi-hole add-on Docker image
+2. Smoke-tests the management UI bridge **and asserts the page HTML shows**
+3. Builds the Pi-hole add-on Docker image and checks packaged UI files
 4. Installs **Home Assistant Core** (`ghcr.io/home-assistant/home-assistant:stable`), validates `tests/ha-config`, and waits for the API on port `8123`
 
 Local helpers:

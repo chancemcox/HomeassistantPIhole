@@ -51,13 +51,13 @@ jobs:
           path: ./pihole
 
   test-ui:
-    name: Management UI unit smoke
+    name: Management UI page smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run UI bridge smoke test
+      - name: Assert management page HTML shows
         run: bash tests/smoke_ui.sh
 
   build-addon:
@@ -84,9 +84,30 @@ jobs:
       - name: Verify image contents
         run: |
           docker image inspect pihole-ha:test >/dev/null
-          docker run --rm --entrypoint python3 pihole-ha:test -m py_compile /opt/pihole-ha/server.py /opt/pihole-ha/presets.py
+          docker run --rm --entrypoint python3 pihole-ha:test -m py_compile \
+            /opt/pihole-ha/server.py \
+            /opt/pihole-ha/presets.py \
+            /opt/pihole-ha/resolve_ingress_port.py
           docker run --rm --entrypoint test pihole-ha:test -x /ha-entrypoint.sh
+          docker run --rm --entrypoint test pihole-ha:test -x /opt/pihole-ha/resolve_ingress_port.py
+          docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/index.html
           echo "Add-on image smoke checks passed"
+
+      - name: Assert page HTML from built image
+        run: |
+          set -euo pipefail
+          html="$(docker run --rm --entrypoint cat pihole-ha:test /opt/pihole-ha/static/index.html)"
+          echo "$html" | grep -q '<title>Pi-hole</title>'
+          echo "$html" | grep -q 'class="brand">Pi-hole</h1>'
+          echo "$html" | grep -q 'id="traffic-title"'
+          echo "$html" | grep -q 'id="setup-title"'
+          echo "$html" | grep -q 'id="dns-ips"'
+          echo "$html" | grep -q 'id="admin-urls"'
+          echo "$html" | grep -q 'src="/static/app.js"'
+          echo "$html" | grep -q 'href="/static/styles.css"'
+          docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/app.js
+          docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/styles.css
+          echo "Packaged management page HTML OK"
 
   homeassistant:
     name: Home Assistant Core test install
