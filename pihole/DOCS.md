@@ -251,9 +251,11 @@ From the Home Assistant sidebar you can:
 
 DNS always listens on host port **53**. The native Pi-hole admin / API listens on host port **8088**.
 
-- **Ingress sidebar** → custom management panel (blocking, traffic, lists).
+- **Ingress sidebar** → custom management panel (blocking, traffic, lists). Because this app uses `host_network`, Ingress uses a **Supervisor-assigned dynamic port** (`ingress_port: 0`) so it does not collide with other host-network apps on `8099`.
 - **Open Web UI** on the add-on page → native Pi-hole admin at `http://<host>:8088/admin`.
 - You can disable the published `8088` host mapping under Network if you only want Ingress.
+
+If the Pi-hole sidebar ever shows a different app (for example HomeScan), update to **1.9.0+** and fully restart the Pi-hole add-on so it rebinds to its own Ingress port.
 
 ## Options
 
