@@ -3,6 +3,7 @@
 ## 1.3.0
 
 - Add GitHub Actions CI with add-on lint, image build, UI smoke tests, and Home Assistant Core install for testing
+- Remove default-value keys from `config.yaml` / `build.yaml` so `frenck/action-addon-linter` passes
 
 ## 1.2.0
 
