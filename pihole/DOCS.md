@@ -265,7 +265,7 @@ Your add-on log will show `failed to create listening socket for port 53: Addres
 - `systemd-resolved` / another host DNS stub
 - A second Pi-hole container
 
-Stop or reconfigure that service so port **53/udp** and **53/tcp** are free, then restart Pi-hole. Until then the management UI can still load, but network-wide DNS blocking will not work.
+The management UI and **Enable blocking** error name the process or Supervisor add-on holding port 53 when it can be identified. Stop or reconfigure that service so port **53/udp** and **53/tcp** are free, then restart Pi-hole. Until then the management UI can still load, but network-wide DNS blocking will not work (`DNS resolver is not running`).
 
 ## Options
 

@@ -160,11 +160,22 @@ body {
   display: grid;
   gap: 0.65rem;
   justify-items: start;
+  max-width: 28rem;
+}
+
+.hero-actions .banner-warn {
+  margin: 0;
+  justify-self: stretch;
+  text-align: left;
 }
 
 @media (min-width: 860px) {
   .hero-actions {
     justify-items: end;
+  }
+
+  .hero-actions .banner-warn {
+    text-align: right;
   }
 }
 

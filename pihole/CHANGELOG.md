@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.4
+
+- Fix Enable blocking failures when DNS never started: surface Pi-hole `dns_failure` next to the button
+- Error text now reports **what is using port 53** (process via `ss`/`/proc`, plus conflicting Supervisor DNS add-ons)
+- Startup logs list the port-53 owner the same way
+
 ## 1.10.3
 
 - Fix invalid Pi-hole v6 theme values (`default` → `default-auto`; update option schema)
