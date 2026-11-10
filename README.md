@@ -29,10 +29,11 @@ https://github.com/chancemcox/HomeassistantPIhole
 ## Wire up DNS
 
 1. Give Home Assistant a static LAN IP.
-2. Set that IP as the DNS server in your router’s DHCP settings.
-3. Renew client leases.
+2. Set that IP as the DNS server in your router’s DHCP settings (best for the whole network).
+3. Or test one device first — Windows, macOS, iOS, Android, Linux, UniFi, and pfSense/OPNsense examples are in the docs and the sidebar **DNS setup** panel.
+4. Renew client leases and confirm queries appear in the Pi-hole panel.
 
-Details live in [`pihole/DOCS.md`](./pihole/DOCS.md).
+Full walkthrough with multiple examples: [`pihole/DOCS.md`](./pihole/DOCS.md).
 
 ## Repository layout
 

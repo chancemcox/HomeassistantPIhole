@@ -97,10 +97,16 @@
           </div>
           <ol id="setup-steps" class="setup-steps">
             <li>Give this Home Assistant host a static LAN IP.</li>
-            <li>Set router DHCP DNS to the address shown below.</li>
+            <li>Set router DHCP DNS to the address shown below (best for the whole network).</li>
+            <li>Or use one of the device examples under the address chips to test a single client first.</li>
             <li>Renew leases on phones, TVs, and computers.</li>
           </ol>
           <div id="dns-ips" class="dns-ips"></div>
+          <div class="panel-head secondary">
+            <h3>How to use this DNS</h3>
+            <p>Multiple setup examples for routers and devices. Replace the IP with yours if needed.</p>
+          </div>
+          <div id="dns-examples" class="dns-examples"></div>
           <div class="action-row">
             <button id="btn-gravity" class="btn ghost" type="button">Update gravity</button>
             <button id="btn-flush" class="btn ghost" type="button">Flush query log</button>

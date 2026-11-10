@@ -380,6 +380,48 @@ select {
   background: rgba(46, 196, 182, 0.08);
 }
 
+.dns-examples {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.dns-example {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.8rem;
+  background: rgba(7, 19, 26, 0.35);
+}
+
+.dns-example summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.dns-example summary::-webkit-details-marker {
+  display: none;
+}
+
+.dns-example summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1rem;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.dns-example[open] summary::before {
+  content: "–";
+}
+
+.dns-example p {
+  margin: 0.55rem 0 0.15rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
 .version-line {
   margin: 1rem 0 0;
   color: var(--muted);
