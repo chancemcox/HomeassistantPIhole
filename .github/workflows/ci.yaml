@@ -21,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install PyYAML
+        run: python3 -m pip install --user pyyaml
+
       - name: Validate repository.yaml
         run: python3 -c "import yaml; data=yaml.safe_load(open('repository.yaml')); assert data.get('name'), 'repository.yaml missing name'"
 
@@ -43,9 +46,6 @@ jobs:
           assert cfg.get("ports", {}).get("8088/tcp") == 8088
           print(f"Add-on {cfg['slug']} version {cfg['version']} OK")
           PY
-
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
 
       - name: Home Assistant Add-on Lint
         uses: frenck/action-addon-linter@v2.21.2
