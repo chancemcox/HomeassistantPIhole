@@ -1,10 +1,14 @@
 # Changelog
 
-## 1.3.0
+## 1.6.0
 
 - Add GitHub Actions CI with add-on lint, image build, UI smoke tests, and Home Assistant Core install for testing
 - Remove default-value keys from `config.yaml` / `build.yaml` so `frenck/action-addon-linter` passes
 - Ensure CI re-runs cleanly after lint config cleanup
+
+## 1.5.0
+
+- Add DNS traffic panel with 24-hour chart, live query log, and top clients
 
 ## 1.2.0
 

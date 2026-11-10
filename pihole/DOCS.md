@@ -241,6 +241,7 @@ Regex examples:
 From the Home Assistant sidebar you can:
 
 - Enable, disable, or pause blocking
+- Watch **DNS traffic** over 24 hours, live queries, and top clients
 - Apply the **Hulu ads** streaming preset
 - Watch query / block / client metrics
 - Add or remove allow and deny domains
