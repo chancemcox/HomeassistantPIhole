@@ -268,7 +268,7 @@ function renderTrafficChart(history) {
 
   // Home Assistant primary / error / accent
   const series = [
-    { values: totals, color: "#03a9f4", width: 2.5 },
+    { values: totals, color: "#009ac7", width: 2.5 },
     { values: blocked, color: "#db4437", width: 2 },
     { values: forwarded, color: "#ff9800", width: 2 },
   ];

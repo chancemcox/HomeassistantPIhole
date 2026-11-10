@@ -1,7 +1,7 @@
 /* Home Assistant–aligned theme tokens (light + dark). */
 :root {
-  --primary-color: #03a9f4;
-  --dark-primary-color: #0288d1;
+  --primary-color: #009ac7;
+  --dark-primary-color: #007ea3;
   --accent-color: #ff9800;
   --primary-background-color: #fafafa;
   --card-background-color: #ffffff;
@@ -40,7 +40,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --primary-color: #18bcf2;
-    --dark-primary-color: #03a9f4;
+    --dark-primary-color: #009ac7;
     --accent-color: #ffb74d;
     --primary-background-color: #111111;
     --card-background-color: #1c1c1c;
