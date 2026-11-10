@@ -93,6 +93,12 @@ with urllib.request.urlopen("http://127.0.0.1:18099/api/health", timeout=5) as r
     health = json.load(response)
     assert health.get("ok") is True, health
 
+with urllib.request.urlopen("http://127.0.0.1:18099/api/setup", timeout=5) as response:
+    setup = json.load(response)
+    assert setup.get("dns_port") == 53, setup
+    assert setup.get("admin_port") == 18080, setup
+    assert isinstance(setup.get("admin_urls"), list), setup
+
 req = urllib.request.Request(
     "http://127.0.0.1:18099/api/presets/hulu-ads/apply",
     data=b"{}",

@@ -28,6 +28,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8088").rstrip("/")
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
 UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8099"))
+DNS_PORT = int(os.environ.get("PIHOLE_DNS_PORT", "53"))
 LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
 AUTO_BLOCK_HULU_ADS = os.environ.get("PIHOLE_HA_BLOCK_HULU_ADS", "false").lower() in {
     "1",
@@ -44,6 +45,20 @@ ALLOWED_DOMAIN_FILTERS = {
 ALLOWED_TYPES = {"allow", "deny"}
 ALLOWED_KINDS = {"exact", "regex"}
 
+
+def _admin_port_from_api_base(api_base: str) -> int:
+    """Native Pi-hole web/API listen port used for Open Web UI and API forwarding."""
+    try:
+        parsed = urllib.parse.urlparse(api_base)
+        if parsed.port:
+            return int(parsed.port)
+        return 443 if parsed.scheme == "https" else 80
+    except Exception:  # noqa: BLE001
+        return 8088
+
+
+ADMIN_PORT = int(os.environ.get("PIHOLE_ADMIN_PORT", str(_admin_port_from_api_base(API_BASE))))
+
 _session_lock = threading.Lock()
 _session: dict[str, Any] = {"sid": None, "expires": 0.0}
 
@@ -57,11 +72,11 @@ log = logging.getLogger("pihole-ha-ui")
 def wait_for_pihole(timeout: int = 120) -> bool:
     deadline = time.time() + timeout
     host = "127.0.0.1"
-    port = 8088
+    port = ADMIN_PORT
     try:
         parsed = urllib.parse.urlparse(API_BASE)
         host = parsed.hostname or host
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        port = parsed.port or port
     except Exception as exc:  # noqa: BLE001
         log.warning("Failed to parse API_BASE=%s: %s", API_BASE, exc)
 
@@ -396,8 +411,9 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "dns_ips": ips,
-                    "dns_port": 53,
-                    "admin_port": 8088,
+                    "dns_port": DNS_PORT,
+                    "admin_port": ADMIN_PORT,
+                    "admin_urls": [f"http://{ip}:{ADMIN_PORT}/admin" for ip in ips],
                     "example_ip": example_ip,
                     "upstream_hint": "Point your router DHCP DNS to one of these addresses.",
                     "examples": build_dns_examples(example_ip),
