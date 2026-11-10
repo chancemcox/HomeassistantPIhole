@@ -34,9 +34,23 @@ function fmt(n) {
   return new Intl.NumberFormat().format(n);
 }
 
+// Home Assistant Ingress serves this UI under /api/hassio_ingress/<token>/.
+// Absolute "/api/..." and "/static/..." URLs escape that prefix and break CSS/JS/API.
+const UI_BASE = (() => {
+  const path = window.location.pathname || "/";
+  if (path.endsWith("/")) return path;
+  const idx = path.lastIndexOf("/");
+  return idx >= 0 ? path.slice(0, idx + 1) : "/";
+})();
+
+function uiUrl(path) {
+  return `${UI_BASE}${String(path || "").replace(/^\//, "")}`;
+}
+
 async function api(path, options = {}) {
-  console.debug("[pihole-ui] request", path, options.method || "GET");
-  const response = await fetch(path, {
+  const url = uiUrl(path);
+  console.debug("[pihole-ui] request", url, options.method || "GET");
+  const response = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
@@ -49,7 +63,7 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     const message = data?.error?.message || data?.error || data?.raw || response.statusText;
-    console.error("[pihole-ui] request failed", path, response.status, message);
+    console.error("[pihole-ui] request failed", url, response.status, message);
     throw new Error(message);
   }
   return data;

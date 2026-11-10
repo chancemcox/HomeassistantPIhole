@@ -174,8 +174,9 @@ assert 'class="brand">Pi-hole</h1>' in html or ">Pi-hole<" in html, html[:800]
 assert 'id="traffic-title"' in html, "traffic panel missing from page"
 assert 'id="setup-title"' in html, "DNS setup panel missing from page"
 assert 'id="dns-ips"' in html and 'id="admin-urls"' in html, "port chips missing from page"
-assert 'src="/static/app.js"' in html, html[:500]
-assert 'href="/static/styles.css"' in html, html[:500]
+assert 'src="static/app.js' in html, html[:500]
+assert 'href="static/styles.css' in html, html[:500]
+assert 'href="/static/' not in html and 'src="/static/' not in html, "absolute /static paths break HA Ingress"
 print("Management page HTML OK")
 
 with urllib.request.urlopen("http://127.0.0.1:18099/static/app.js", timeout=5) as response:
@@ -183,6 +184,7 @@ with urllib.request.urlopen("http://127.0.0.1:18099/static/app.js", timeout=5) a
     assert response.status == 200
     assert "refreshSetup" in js
     assert "admin_port" in js or "adminUrls" in js
+    assert "UI_BASE" in js and "uiUrl" in js, "Ingress-relative URL helper missing"
 print("static/app.js OK")
 
 with urllib.request.urlopen("http://127.0.0.1:18099/static/styles.css", timeout=5) as response:

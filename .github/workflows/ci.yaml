@@ -108,8 +108,10 @@ jobs:
           echo "$html" | grep -q 'id="setup-title"'
           echo "$html" | grep -q 'id="dns-ips"'
           echo "$html" | grep -q 'id="admin-urls"'
-          echo "$html" | grep -q 'src="/static/app.js"'
-          echo "$html" | grep -q 'href="/static/styles.css"'
+          echo "$html" | grep -q 'src="static/app.js'
+          echo "$html" | grep -q 'href="static/styles.css'
+          ! echo "$html" | grep -q 'href="/static/'
+          ! echo "$html" | grep -q 'src="/static/'
           docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/app.js
           docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/styles.css
           echo "Packaged management page HTML OK"
