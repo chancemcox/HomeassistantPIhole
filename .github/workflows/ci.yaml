@@ -36,6 +36,8 @@ jobs:
           assert cfg.get("ingress") is True
           # frenck/action-addon-linter rejects webui whenever Ingress is enabled
           assert "webui" not in cfg, "webui must be omitted when ingress is true"
+          # Fixed unique Ingress port — must not be HA default 8099 (collides on host_network)
+          assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
           assert cfg.get("ports", {}).get("53/tcp") == 53
           assert cfg.get("ports", {}).get("53/udp") == 53
           assert cfg.get("ports", {}).get("8088/tcp") == 8088
@@ -56,6 +58,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        run: python3 -m pip install --user pyyaml
 
       - name: Assert management page HTML shows
         run: bash tests/smoke_ui.sh
