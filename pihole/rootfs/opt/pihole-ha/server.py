@@ -27,7 +27,7 @@ from presets import HULU_ADS_PRESET, PRESETS, list_presets  # noqa: E402
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8088").rstrip("/")
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
-UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8099"))
+UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8189"))
 DNS_PORT = int(os.environ.get("PIHOLE_DNS_PORT", "53"))
 LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
 AUTO_BLOCK_HULU_ADS = os.environ.get("PIHOLE_HA_BLOCK_HULU_ADS", "false").lower() in {

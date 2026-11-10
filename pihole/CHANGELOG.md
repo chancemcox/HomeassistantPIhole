@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.3
+
+- Fix persistent Ingress **502 Bad Gateway** by using a fixed unique `ingress_port: 8189` (not `8099`, not dynamic `0`)
+- Management UI always binds to `8189`, matching what Home Assistant Ingress proxies — no Supervisor port lookup required
+- DNS remains on `53`; native Pi-hole admin/API remains on `8088`
+
 ## 1.9.2
 
 - Fix Ingress **502 Bad Gateway**: resolve the Supervisor-assigned ingress port via `172.30.32.2` (host_network cannot rely on the `supervisor` DNS name)

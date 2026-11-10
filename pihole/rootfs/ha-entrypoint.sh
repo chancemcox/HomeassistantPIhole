@@ -148,40 +148,9 @@ else
   log_info "Using admin password from add-on options (length=${#PASSWORD})"
 fi
 
-resolve_ingress_ui_port() {
-  # With host_network + ingress_port: 0, Supervisor assigns a free high port.
-  # Bind the management UI there so the Pi-hole sidebar does not land on another
-  # host-network app that still owns fixed 8099 (for example HomeScan).
-  #
-  # On host_network the Docker DNS name "supervisor" often does not resolve, so
-  # prefer the Supervisor IP 172.30.32.2. Never fall back to 8099 when we are
-  # running under Supervisor — that causes Ingress 502 Bad Gateway.
-  if [[ -n "${SUPERVISOR_TOKEN:-}" || -n "${HASSIO_TOKEN:-}" ]]; then
-    local attempt resolved
-    for attempt in 1 2 3 4 5 6 7 8; do
-      if resolved="$(python3 /opt/pihole-ha/resolve_ingress_port.py 2>/tmp/pihole-ingress-resolve.err)"; then
-        if [[ -n "${resolved}" ]]; then
-          log_info "Resolved Supervisor ingress_port=${resolved} (attempt ${attempt})"
-          printf '%s' "${resolved}"
-          return 0
-        fi
-      fi
-      log_warn "Supervisor ingress_port not ready yet (attempt ${attempt}/8): $(tr '\n' ' ' </tmp/pihole-ingress-resolve.err 2>/dev/null || true)"
-      sleep 1
-    done
-    die "Could not resolve Supervisor ingress_port under host_network; refusing to bind 8099 (that causes Ingress 502)"
-  fi
-
-  if [[ -n "${PIHOLE_HA_UI_PORT:-}" ]]; then
-    log_info "Using PIHOLE_HA_UI_PORT=${PIHOLE_HA_UI_PORT}"
-    printf '%s' "${PIHOLE_HA_UI_PORT}"
-    return 0
-  fi
-
-  log_debug "No Supervisor token; defaulting management UI to 8099 for local/dev"
-  printf '%s' "8099"
-}
-
+# Ingress listens on a fixed unique port (config.yaml ingress_port: 8189).
+# Do not use 8099 — that is Home Assistant's default and collides with other
+# host_network apps, which produced sidebar 502 / wrong-app symptoms.
 export TZ="${TIMEZONE}"
 export FTLCONF_webserver_api_password="${PASSWORD}"
 export FTLCONF_dns_upstreams="${UPSTREAM_DNS}"
@@ -190,10 +159,15 @@ export FTLCONF_webserver_interface_theme="${INTERFACE_THEME}"
 export FTLCONF_dns_queryLogging="${QUERY_LOGGING}"
 export FTLCONF_webserver_port="${FTLCONF_webserver_port:-8088}"
 export PIHOLE_HA_PASSWORD="${PASSWORD}"
-export PIHOLE_HA_UI_PORT="$(resolve_ingress_ui_port)"
+export PIHOLE_HA_UI_PORT="${PIHOLE_HA_UI_PORT:-8189}"
 export PIHOLE_API_BASE="${PIHOLE_API_BASE:-http://127.0.0.1:8088}"
 export PIHOLE_HA_LOG_LEVEL="${LOG_LEVEL}"
 export PIHOLE_HA_BLOCK_HULU_ADS="${BLOCK_HULU_ADS}"
+
+if [[ "${PIHOLE_HA_UI_PORT}" == "8099" ]]; then
+  log_warn "PIHOLE_HA_UI_PORT=8099 collides with other host_network Ingress apps; prefer 8189"
+fi
+log_info "Management UI will bind to Ingress port ${PIHOLE_HA_UI_PORT}"
 
 # Map add-on log level onto Pi-hole FTL debug flags for deeper diagnostics.
 case "${LOG_LEVEL,,}" in

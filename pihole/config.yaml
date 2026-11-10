@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.9.2"
+version: "1.9.3"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
@@ -8,9 +8,10 @@ arch:
   - amd64
 init: false
 ingress: true
-# Dynamic port: required with host_network so we do not collide with other
-# host-network apps that also default Ingress to 8099 (e.g. HomeScan).
-ingress_port: 0
+# Fixed unique port (not 8099): host_network apps share the host, so the HA
+# default Ingress port collides with other apps (e.g. HomeScan) and dynamic
+# ingress_port: 0 was still causing sidebar 502s when Supervisor lookup failed.
+ingress_port: 8189
 panel_icon: mdi:pi-hole
 panel_title: Pi-hole
 startup: services
