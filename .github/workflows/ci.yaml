@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-addon:
+    name: Lint add-on config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate repository.yaml
+        run: python3 -c "import yaml; data=yaml.safe_load(open('repository.yaml')); assert data.get('name'), 'repository.yaml missing name'"
+
+      - name: Validate pihole/config.yaml
+        run: |
+          python3 <<'PY'
+          import yaml
+          cfg = yaml.safe_load(open("pihole/config.yaml"))
+          required = ["name", "version", "slug", "description", "arch"]
+          missing = [k for k in required if k not in cfg]
+          assert not missing, f"Missing keys: {missing}"
+          assert "amd64" in cfg["arch"] and "aarch64" in cfg["arch"]
+          assert cfg.get("ingress") is True
+          print(f"Add-on {cfg['slug']} version {cfg['version']} OK")
+          PY
+
+      - name: Install PyYAML
+        run: python3 -m pip install --user pyyaml
+
+      - name: Home Assistant Add-on Lint
+        uses: frenck/action-addon-linter@v2.21.2
+        with:
+          path: ./pihole
+
+  test-ui:
+    name: Management UI unit smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run UI bridge smoke test
+        run: bash tests/smoke_ui.sh
+
+  build-addon:
+    name: Build add-on image (amd64)
+    runs-on: ubuntu-latest
+    needs: [lint-addon]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Pi-hole add-on image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./pihole
+          file: ./pihole/Dockerfile
+          load: true
+          tags: pihole-ha:test
+          cache-from: type=gha,scope=pihole-addon
+          cache-to: type=gha,scope=pihole-addon,mode=max
+
+      - name: Verify image contents
+        run: |
+          docker image inspect pihole-ha:test >/dev/null
+          docker run --rm --entrypoint python3 pihole-ha:test -m py_compile /opt/pihole-ha/server.py /opt/pihole-ha/presets.py
+          docker run --rm --entrypoint test pihole-ha:test -x /ha-entrypoint.sh
+          echo "Add-on image smoke checks passed"
+
+  homeassistant:
+    name: Home Assistant Core test install
+    runs-on: ubuntu-latest
+    needs: [lint-addon]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Home Assistant config
+        run: |
+          mkdir -p tests/ha-config
+          cat > tests/ha-config/configuration.yaml <<'YAML'
+          default_config:
+
+          # CI smoke configuration for Home Assistant Core.
+          http:
+            server_port: 8123
+
+          logger:
+            default: info
+          YAML
+          touch tests/ha-config/secrets.yaml
+
+      - name: Pull Home Assistant Core
+        run: docker pull ghcr.io/home-assistant/home-assistant:stable
+
+      - name: Validate Home Assistant config
+        uses: frenck/action-home-assistant@v1.4.1
+        with:
+          path: ./tests/ha-config
+          version: stable
+
+      - name: Start Home Assistant Core
+        run: |
+          docker run -d --name ha-ci \
+            -p 8123:8123 \
+            -v "${PWD}/tests/ha-config:/config" \
+            ghcr.io/home-assistant/home-assistant:stable
+
+      - name: Wait for Home Assistant API
+        run: bash tests/wait_for_ha.sh http://127.0.0.1:8123
+
+      - name: Show Home Assistant API response
+        run: |
+          status="$(curl -sS -o /tmp/ha-api.json -w '%{http_code}' http://127.0.0.1:8123/api/ || true)"
+          echo "HTTP ${status}"
+          cat /tmp/ha-api.json || true
+          echo
+          test "${status}" = "200" -o "${status}" = "401"
+
+      - name: Collect Home Assistant logs on failure
+        if: failure()
+        run: docker logs ha-ci || true
+
+      - name: Stop Home Assistant
+        if: always()
+        run: docker rm -f ha-ci || true

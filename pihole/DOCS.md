@@ -277,6 +277,17 @@ Values supplied through these options are applied as Pi-hole `FTLCONF_*` environ
 
 After DNS is working, you can also add the built-in **Pi-hole** integration pointed at the host IP and port `8088` (if exposed) using the same password.
 
+## Continuous integration
+
+GitHub Actions installs Home Assistant Core and builds this add-on on every PR:
+
+- Lint add-on metadata
+- Build the Docker image
+- Smoke-test the Ingress management UI
+- Boot `ghcr.io/home-assistant/home-assistant:stable` with `tests/ha-config`
+
+See the root README for local `docker compose -f docker-compose.ci.yml` usage.
+
 ## Notes
 
 - The official Community Pi-hole add-on is deprecated; this app packages current Pi-hole v6 with a Home Assistant Ingress UI.

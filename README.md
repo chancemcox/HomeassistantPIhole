@@ -37,11 +37,36 @@ https://github.com/chancemcox/HomeassistantPIhole
 
 Full walkthrough with multiple examples: [`pihole/DOCS.md`](./pihole/DOCS.md).
 
+## CI / testing on GitHub
+
+Pull requests and pushes to `main` run `.github/workflows/ci.yaml`, which:
+
+1. Lints the add-on config (`frenck/action-addon-linter`)
+2. Smoke-tests the management UI bridge
+3. Builds the Pi-hole add-on Docker image
+4. Installs **Home Assistant Core** (`ghcr.io/home-assistant/home-assistant:stable`), validates `tests/ha-config`, and waits for the API on port `8123`
+
+Local helpers:
+
+```bash
+# Home Assistant Core only
+docker compose -f docker-compose.ci.yml up -d homeassistant
+# open http://127.0.0.1:8123
+
+# UI bridge smoke test
+bash tests/smoke_ui.sh
+```
+
+Note: GitHub Actions runs **Home Assistant Core**, not full Home Assistant OS/Supervisor. Add-on installation in Supervisor still needs a real HA OS host (or a supervised VM). CI still catches config/build/UI regressions before that.
+
 ## Repository layout
 
 ```text
 .
 ├── repository.yaml          # Home Assistant add-on repository manifest
+├── .github/workflows/ci.yaml
+├── docker-compose.ci.yml    # Local HA Core test stack
+├── tests/                   # CI helpers + HA config
 ├── pihole/                  # Pi-hole app
 │   ├── config.yaml
 │   ├── Dockerfile

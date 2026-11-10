@@ -4,3 +4,10 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Home Assistant runtime files from local CI compose
+tests/ha-config/.storage/
+tests/ha-config/home-assistant.log*
+tests/ha-config/home-assistant_v2.db*
+tests/ha-config/tts/
+tests/ha-config/deps/
