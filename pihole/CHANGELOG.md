@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- Add curated **Hulu ads** streaming preset (exact + regex deny list)
+- Add sidebar **Block Hulu ads** button and preset notes
+- Add `block_hulu_ads` option to auto-apply the preset on startup
+- Document Hulu DNS blocking caveats and recovery steps
+
 ## 1.1.0
 
 - Add configurable `log_level` option (`trace`, `debug`, `info`, `warning`, `error`)

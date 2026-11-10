@@ -90,6 +90,7 @@ DNS_LISTENING_MODE="ALL"
 INTERFACE_THEME="default"
 QUERY_LOGGING="true"
 TIMEZONE="America/Chicago"
+BLOCK_HULU_ADS="false"
 
 if [[ -f "${OPTIONS_FILE}" ]]; then
   log_info "Loading add-on options from ${OPTIONS_FILE}"
@@ -119,6 +120,9 @@ if [[ -f "${OPTIONS_FILE}" ]]; then
   fi
   if ! TIMEZONE="$(jq -r '.timezone // "America/Chicago"' "${OPTIONS_FILE}")"; then
     die "Failed to parse timezone from ${OPTIONS_FILE}"
+  fi
+  if ! BLOCK_HULU_ADS="$(jq -r '.block_hulu_ads // false' "${OPTIONS_FILE}")"; then
+    die "Failed to parse block_hulu_ads from ${OPTIONS_FILE}"
   fi
 else
   log_warn "${OPTIONS_FILE} not found; using built-in defaults (local/dev mode)"
@@ -155,6 +159,7 @@ export PIHOLE_HA_PASSWORD="${PASSWORD}"
 export PIHOLE_HA_UI_PORT="${PIHOLE_HA_UI_PORT:-8099}"
 export PIHOLE_API_BASE="${PIHOLE_API_BASE:-http://127.0.0.1:8080}"
 export PIHOLE_HA_LOG_LEVEL="${LOG_LEVEL}"
+export PIHOLE_HA_BLOCK_HULU_ADS="${BLOCK_HULU_ADS}"
 
 # Map add-on log level onto Pi-hole FTL debug flags for deeper diagnostics.
 case "${LOG_LEVEL,,}" in
@@ -182,6 +187,7 @@ log_info "  timezone=${TZ}"
 log_info "  webserver_port=${FTLCONF_webserver_port}"
 log_info "  ui_port=${PIHOLE_HA_UI_PORT}"
 log_info "  api_base=${PIHOLE_API_BASE}"
+log_info "  block_hulu_ads=${BLOCK_HULU_ADS}"
 log_debug "  password_file=${PASSWORD_FILE}"
 log_debug "  pihole_data=${PIHOLE_DATA}"
 

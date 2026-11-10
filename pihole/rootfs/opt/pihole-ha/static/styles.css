@@ -380,6 +380,32 @@ select {
   background: rgba(46, 196, 182, 0.08);
 }
 
+.preset-card {
+  display: grid;
+  gap: 0.9rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(7, 19, 26, 0.35);
+}
+
+@media (min-width: 720px) {
+  .preset-card {
+    grid-template-columns: 1fr auto;
+  }
+}
+
+.preset-card h3 {
+  margin: 0 0 0.35rem;
+}
+
+.preset-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .dns-examples {
   display: grid;
   gap: 0.55rem;
