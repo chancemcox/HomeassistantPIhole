@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.6
+
+- Set `hassio_role: manager` so the UI can **name the conflicting DNS add-on** via Supervisor (`GET /addons` needs manager, not default)
+- Fallback fingerprint for AdGuard Home admin UI on localhost when Supervisor lookup is empty
+- Clearer action text: stop the peer add-on under Settings → Add-ons, then restart Pi-hole
+
 ## 1.10.5
 
 - Name the port-53 conflict clearly (no raw `ss` dump): localhost-only binds call out AdGuard / DNS stubs; `127.0.0.53` → systemd-resolved
