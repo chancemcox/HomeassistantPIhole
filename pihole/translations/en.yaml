@@ -1,0 +1,23 @@
+configuration:
+  password:
+    name: Admin password
+    description: Password for the Pi-hole API and native admin UI. Leave blank to auto-generate one (shown in the add-on log).
+  upstream_dns:
+    name: Upstream DNS servers
+    description: Resolvers Pi-hole forwards allowed queries to (for example 1.1.1.1 or 8.8.8.8).
+  dns_listening_mode:
+    name: DNS listening mode
+    description: How Pi-hole binds DNS sockets. ALL is recommended for Docker / Home Assistant host networking.
+  interface_theme:
+    name: Native UI theme
+    description: Theme used by the optional native Pi-hole admin interface on port 8080.
+  query_logging:
+    name: Query logging
+    description: Store DNS query history for the dashboard and recent-block lists.
+  timezone:
+    name: Timezone
+    description: IANA timezone used for log rotation and timestamps (example America/Chicago).
+network:
+  53/tcp: DNS over TCP
+  53/udp: DNS over UDP
+  8080/tcp: Native Pi-hole web interface (optional)
