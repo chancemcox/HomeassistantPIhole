@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.10.2"
+version: "1.10.3"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
@@ -34,7 +34,7 @@ options:
     - 1.1.1.1
     - 1.0.0.1
   dns_listening_mode: ALL
-  interface_theme: default
+  interface_theme: default-auto
   query_logging: true
   timezone: America/Chicago
   log_level: info
@@ -44,7 +44,7 @@ schema:
   upstream_dns:
     - str
   dns_listening_mode: list(ALL|LOCAL|BIND|SINGLE|NONE)
-  interface_theme: list(default|default-dark|default-darker|auto)
+  interface_theme: list(default-auto|default-light|default-dark|default-darker|high-contrast|high-contrast-dark|lcars)
   query_logging: bool
   timezone: str
   log_level: list(trace|debug|info|warning|error)

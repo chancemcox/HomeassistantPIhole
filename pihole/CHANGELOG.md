@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.3
+
+- Fix invalid Pi-hole v6 theme values (`default` → `default-auto`; update option schema)
+- Disable Pi-hole NTP server by default (avoids `:123` conflicts on Home Assistant hosts)
+- Louder startup errors + in-UI warning when **port 53 is already in use** (DNS cannot start)
+
 ## 1.10.2
 
 - Fix unstyled Ingress UI (Times New Roman / stuck on Checking…): use **relative** `static/` and API URLs so assets load under `/api/hassio_ingress/.../`
