@@ -352,9 +352,10 @@ def _parse_proc_net_listeners(port: int) -> list[dict[str, Any]]:
                 continue
             if ":" not in local:
                 continue
-            local_port = local.rsplit(":", 1)[-1].upper()
-            if local_port != hex_port:
+            addr_hex, local_port = local.rsplit(":", 1)
+            if local_port.upper() != hex_port:
                 continue
+            address = _hex_ip_to_str(addr_hex, ipv6=table.endswith("6"))
             try:
                 inode = int(parts[9])
             except ValueError:
@@ -370,7 +371,12 @@ def _parse_proc_net_listeners(port: int) -> list[dict[str, Any]]:
                             "pid": None,
                             "comm": "",
                             "cmdline": "",
-                            "detail": f"{proto} listener inode={inode} (process not visible in this namespace)",
+                            "address": address,
+                            "detail": (
+                                f"{proto} listener on {address}:{port}"
+                                if address
+                                else f"{proto} listener inode={inode} (process not visible in this namespace)"
+                            ),
                         }
                     )
                 continue
@@ -387,18 +393,64 @@ def _parse_proc_net_listeners(port: int) -> list[dict[str, Any]]:
                         "pid": pid,
                         "comm": comm,
                         "cmdline": cmdline,
-                        "detail": f"{proto} pid={pid} {comm or 'unknown'}{(' — ' + cmdline) if cmdline else ''}".strip(),
+                        "address": address,
+                        "detail": (
+                            f"{proto} on {address or '?'}:{port} → pid={pid} {comm or 'unknown'}"
+                            + (f" — {cmdline}" if cmdline else "")
+                        ).strip(),
                     }
                 )
     return owners
+
+
+def _hex_ip_to_str(addr_hex: str, ipv6: bool = False) -> str | None:
+    try:
+        if ipv6:
+            raw = bytes.fromhex(addr_hex)
+            if len(raw) != 16:
+                return None
+            # /proc/net/tcp6 stores little-endian 32-bit words.
+            words = [raw[i : i + 4][::-1].hex() for i in range(0, 16, 4)]
+            packed = bytes.fromhex("".join(words))
+            return socket.inet_ntop(socket.AF_INET6, packed)
+        # IPv4 in /proc/net is little-endian hex.
+        value = int(addr_hex, 16)
+        return socket.inet_ntoa(value.to_bytes(4, "little"))
+    except (ValueError, OSError):
+        return None
+
+
+def _ss_local_address(line: str, port: int) -> str | None:
+    """Extract the local IP from an ss listen line for the given port."""
+    # Prefer bracketed IPv6 then plain IPv4/host tokens ending in :port.
+    match = re.search(rf"\[([^\]]+)\]:{port}\b", line)
+    if match:
+        return match.group(1)
+    match = re.search(rf"(\d+\.\d+\.\d+\.\d+):{port}\b", line)
+    if match:
+        return match.group(1)
+    match = re.search(rf"\*:{port}\b|0\.0\.0\.0:{port}\b", line)
+    if match:
+        return "0.0.0.0"
+    return None
+
+
+def _is_loopback_addr(addr: str | None) -> bool:
+    if not addr:
+        return False
+    lowered = addr.lower().strip()
+    return (
+        lowered in {"127.0.0.1", "127.0.0.53", "127.0.0.54", "::1", "localhost"}
+        or lowered.startswith("127.")
+    )
 
 
 def _parse_ss_listeners(port: int) -> list[dict[str, Any]]:
     if not __import__("shutil").which("ss"):
         return []
     owners: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    # -p needs privileges; still useful when the peer is in this PID namespace.
+    seen: set[tuple[str, str | None, int | None, str]] = set()
+    # Prefer -p variants; fall back without process names when CAP/PID namespace blocks them.
     for args in (["ss", "-lntup"], ["ss", "-lnup"], ["ss", "-lntp"], ["ss", "-lntu"]):
         try:
             completed = subprocess.run(
@@ -411,54 +463,89 @@ def _parse_ss_listeners(port: int) -> list[dict[str, Any]]:
         except (OSError, subprocess.TimeoutExpired) as exc:
             log.debug("ss failed (%s): %s", args, exc)
             continue
+        batch: list[dict[str, Any]] = []
         for line in completed.stdout.splitlines():
             if not re.search(rf":{port}\b", line):
                 continue
             cleaned = " ".join(line.split())
-            if cleaned in seen:
-                continue
-            seen.add(cleaned)
+            first = cleaned.split(" ", 1)[0].lower()
+            proto = "TCP" if first.startswith("tcp") else "UDP"
+            local = _ss_local_address(cleaned, port)
             pid = None
             comm = ""
-            match = re.search(r'pid=(\d+).*?users:\(\("([^"]+)"', cleaned)
-            if not match:
-                match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', cleaned)
-                if match:
-                    comm = match.group(1)
-                    pid = int(match.group(2))
+            match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', cleaned)
+            if match:
+                comm = match.group(1)
+                pid = int(match.group(2))
             else:
-                pid = int(match.group(1))
-                comm = match.group(2)
-            owners.append(
+                match = re.search(r'pid=(\d+).*?users:\(\("([^"]+)"', cleaned)
+                if match:
+                    pid = int(match.group(1))
+                    comm = match.group(2)
+            key = (proto, local, pid, comm)
+            if key in seen:
+                continue
+            seen.add(key)
+            if pid and comm:
+                cmdline = _read_cmdline(pid)
+                detail = (
+                    f"{proto} on {local or '?'}:{port} → pid={pid} {comm}"
+                    + (f" — {cmdline}" if cmdline else "")
+                )
+            elif local:
+                detail = f"{proto} listener on {local}:{port}"
+            else:
+                detail = f"{proto} listener on port {port}"
+            batch.append(
                 {
-                    "proto": "TCP" if "tcp" in cleaned.lower() else "UDP",
+                    "proto": proto,
                     "pid": pid,
                     "comm": comm,
                     "cmdline": _read_cmdline(pid) if pid else "",
-                    "detail": cleaned,
+                    "address": local,
+                    "raw": cleaned,
+                    "detail": detail,
                 }
             )
-        if owners:
+        if batch:
+            owners.extend(batch)
+            # Stop once we got a useful sample; prefer the first successful ss invocation.
             break
     return owners
 
 
-def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
-    """Ask Home Assistant Supervisor which other add-ons may own DNS port 53."""
+def _supervisor_api_bases() -> list[str]:
+    configured = (os.environ.get("SUPERVISOR_API_BASE") or "").strip()
+    if configured:
+        return [configured.rstrip("/")]
+    # host_network add-ons cannot rely on the "supervisor" DNS name.
+    return ["http://172.30.32.2", "http://supervisor", "http://hassio"]
+
+
+def _supervisor_get_json(path: str) -> Any | None:
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
     if not token:
-        return []
-    base = os.environ.get("SUPERVISOR_API_BASE", "http://supervisor").rstrip("/")
-    request = urllib.request.Request(
-        f"{base}/addons",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=3) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        log.debug("Supervisor add-ons lookup failed: %s", exc)
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    errors: list[str] = []
+    for base in _supervisor_api_bases():
+        url = f"{base.rstrip('/')}/{path.lstrip('/')}"
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{url}: {exc}")
+            continue
+    if errors:
+        log.debug("Supervisor GET %s failed: %s", path, "; ".join(errors))
+    return None
+
+
+def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
+    """Ask Home Assistant Supervisor which other add-ons may own DNS port 53."""
+    payload = _supervisor_get_json("/addons")
+    if not isinstance(payload, dict):
         return []
 
     data = payload.get("data") if isinstance(payload, dict) else None
@@ -477,18 +564,30 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
         slug = str(addon.get("slug") or "")
         name = str(addon.get("name") or slug or "unknown add-on")
         state = str(addon.get("state") or "")
-        if state and state not in {"started", "running"}:
-            # Still flag known DNS add-ons even when stopped — they explain historical binds.
-            if slug.lower() not in _KNOWN_DNS_SLUGS and not any(
-                key in slug.lower() for key in ("adguard", "dnsmasq", "unbound", "pihole")
-            ):
-                continue
         slug_l = slug.lower()
         # Skip ourselves (slug is "pihole" or a namespaced "*_pihole").
         if slug_l == "pihole" or slug_l.endswith("_pihole"):
             continue
 
+        known = slug_l in _KNOWN_DNS_SLUGS or any(
+            key in slug_l for key in ("adguard", "dnsmasq", "unbound", "blocky", "technitium")
+        )
+        if state and state not in {"started", "running"}:
+            # Still flag known DNS add-ons even when stopped.
+            if not known:
+                continue
+
         network = addon.get("network") or addon.get("ports") or {}
+        # List endpoint often omits ports — fetch detail for likely DNS add-ons.
+        if not network and (known or state in {"started", "running"}):
+            detail_payload = _supervisor_get_json(f"/addons/{slug}/info")
+            if isinstance(detail_payload, dict):
+                detail_data = detail_payload.get("data") or detail_payload
+                if isinstance(detail_data, dict):
+                    network = detail_data.get("network") or detail_data.get("ports") or network
+                    state = str(detail_data.get("state") or state)
+                    name = str(detail_data.get("name") or name)
+
         claims_53 = False
         if isinstance(network, dict):
             for key, value in network.items():
@@ -497,10 +596,10 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
                     claims_53 = True
                 if value in {53, "53", port, str(port)}:
                     claims_53 = True
-        known = slug_l in _KNOWN_DNS_SLUGS or any(
-            key in slug_l for key in ("adguard", "dnsmasq", "unbound", "blocky", "technitium")
-        )
         if not claims_53 and not known:
+            continue
+        # Prefer running DNS add-ons; mention stopped known ones as secondary.
+        if state and state not in {"started", "running"} and not claims_53:
             continue
         detail = f"Home Assistant add-on '{name}' (slug={slug}, state={state or 'unknown'})"
         if claims_53:
@@ -519,25 +618,97 @@ def _supervisor_dns_conflicts(port: int = DNS_PORT) -> list[dict[str, Any]]:
     return conflicts
 
 
+def _humanize_port_owner_summary(
+    port: int,
+    socket_owners: list[dict[str, Any]],
+    addon_conflicts: list[dict[str, Any]],
+) -> str:
+    """Build a short user-facing explanation instead of dumping raw ss lines."""
+    parts: list[str] = []
+
+    named = [
+        o
+        for o in socket_owners
+        if o.get("comm")
+        and "pihole" not in str(o.get("comm", "")).lower()
+        and "ftl" not in str(o.get("comm", "")).lower()
+    ]
+    for owner in named:
+        parts.append(str(owner.get("detail")))
+
+    for conflict in addon_conflicts:
+        if conflict.get("detail"):
+            parts.append(str(conflict["detail"]))
+
+    addresses = sorted(
+        {
+            str(o.get("address"))
+            for o in socket_owners
+            if o.get("address")
+        }
+    )
+    loopback_only = bool(addresses) and all(_is_loopback_addr(addr) for addr in addresses)
+    has_resolved_stub = any(addr in {"127.0.0.53", "127.0.0.54"} for addr in addresses)
+
+    if not parts:
+        if has_resolved_stub:
+            parts.append(
+                "systemd-resolved stub resolver on 127.0.0.53 "
+                "(disable DNSStubListener or stop systemd-resolved on the host)"
+            )
+        elif loopback_only:
+            # AdGuard Home on HA commonly binds 127.0.0.1:53 and [::1]:53.
+            addr_list = ", ".join(f"{a}:{port}" for a in addresses)
+            parts.append(
+                f"a localhost DNS service on {addr_list} "
+                "(often AdGuard Home, dnsmasq, or systemd-resolved — "
+                "stop that add-on/service, then restart Pi-hole)"
+            )
+        elif addresses:
+            parts.append(
+                "listeners on "
+                + ", ".join(f"{a}:{port}" for a in addresses)
+                + " (process name not visible from this add-on namespace — "
+                "check AdGuard, dnsmasq, or another DNS add-on)"
+            )
+        else:
+            parts.append(
+                "another DNS service on this host (process not visible from this add-on — "
+                "check AdGuard, dnsmasq, systemd-resolved)"
+            )
+    elif loopback_only and not any("AdGuard" in p or "adguard" in p.lower() for p in parts):
+        # Named add-on missing but bind pattern matches AdGuard/localhost stub.
+        if has_resolved_stub:
+            parts.insert(
+                0,
+                "systemd-resolved-style stub on loopback",
+            )
+        else:
+            parts.append(
+                "bound only on localhost "
+                + ", ".join(addresses)
+                + " (typical of AdGuard Home)"
+            )
+
+    # Deduplicate while preserving order.
+    unique: list[str] = []
+    for part in parts:
+        if part and part not in unique:
+            unique.append(part)
+    return "; ".join(unique)
+
+
 def describe_port_owners(port: int = DNS_PORT) -> dict[str, Any]:
     """Identify what is using a host port (process list + Supervisor add-ons)."""
-    owners = _parse_ss_listeners(port)
-    if not owners:
-        owners = _parse_proc_net_listeners(port)
+    socket_owners = _parse_ss_listeners(port)
+    if not any(o.get("comm") for o in socket_owners):
+        # Merge /proc inode mapping when ss could not name the process.
+        for owner in _parse_proc_net_listeners(port):
+            if owner.get("comm") or not socket_owners:
+                socket_owners.append(owner)
     addon_conflicts = _supervisor_dns_conflicts(port)
-
-    # Prefer named processes; keep addon hints even when process list is empty.
-    details = [o.get("detail") for o in owners if o.get("detail")]
-    for conflict in addon_conflicts:
-        if conflict.get("detail") and conflict["detail"] not in details:
-            owners.append(conflict)
-            details.append(conflict["detail"])
-
-    summary = "; ".join(details) if details else (
-        f"port {port} appears busy but the owning process is not visible from this container "
-        "(common with host services outside the add-on PID namespace — check AdGuard, "
-        "dnsmasq, systemd-resolved, or another DNS add-on)"
-    )
+    summary = _humanize_port_owner_summary(port, socket_owners, addon_conflicts)
+    owners = list(socket_owners) + list(addon_conflicts)
     return {"port": port, "owners": owners, "summary": summary}
 
 
