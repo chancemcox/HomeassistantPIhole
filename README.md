@@ -6,7 +6,7 @@ Install [Pi-hole](https://pi-hole.net/) as a Home Assistant app and use it as yo
 
 - Packages current **Pi-hole v6** for Home Assistant OS / Supervised
 - Configures upstream DNS, password, listening mode, and timezone from the app options
-- Serves a **management UI** in the Home Assistant sidebar (Ingress on port **8189**, avoiding clashes with other host-network apps on 8099)
+- Serves a **management UI** in the Home Assistant sidebar (Ingress on port **8189**, HA-styled cards/colors, avoiding clashes with other host-network apps on 8099)
 - Native Pi-hole admin is on port **8088**; DNS stays on **53**
 - Shows **DNS traffic**: 24-hour chart, live query log, and top clients
 - Enable / pause / disable blocking, manage allow & deny lists, update gravity
