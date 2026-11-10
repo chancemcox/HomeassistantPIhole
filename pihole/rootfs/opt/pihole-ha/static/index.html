@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi-hole</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+    <div class="app">
+      <header class="hero">
+        <div class="brand-block">
+          <p class="eyebrow">Home Assistant</p>
+          <h1 class="brand">Pi-hole</h1>
+          <p class="tagline">Network-wide ad blocking DNS for every device on your LAN.</p>
+        </div>
+        <div class="hero-actions">
+          <div id="blocking-badge" class="status-badge is-loading">Checking…</div>
+          <div class="cta-row">
+            <button id="btn-enable" class="btn primary" type="button">Enable blocking</button>
+            <button id="btn-pause" class="btn ghost" type="button">Pause 5 min</button>
+            <button id="btn-disable" class="btn danger" type="button">Disable</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="Query metrics">
+        <article class="metric" style="--delay: 0ms">
+          <span class="metric-label">Queries</span>
+          <strong id="metric-total" class="metric-value">—</strong>
+        </article>
+        <article class="metric" style="--delay: 60ms">
+          <span class="metric-label">Blocked</span>
+          <strong id="metric-blocked" class="metric-value">—</strong>
+        </article>
+        <article class="metric" style="--delay: 120ms">
+          <span class="metric-label">Block rate</span>
+          <strong id="metric-percent" class="metric-value">—</strong>
+        </article>
+        <article class="metric" style="--delay: 180ms">
+          <span class="metric-label">Clients</span>
+          <strong id="metric-clients" class="metric-value">—</strong>
+        </article>
+      </section>
+
+      <div class="panels">
+        <section class="panel" aria-labelledby="lists-title">
+          <div class="panel-head">
+            <h2 id="lists-title">Domain lists</h2>
+            <p>Allow or deny exact hostnames without leaving Home Assistant.</p>
+          </div>
+          <form id="domain-form" class="domain-form">
+            <input
+              id="domain-input"
+              name="domain"
+              type="text"
+              placeholder="ads.example.com"
+              autocomplete="off"
+              required
+            />
+            <select id="domain-type" name="type" aria-label="List type">
+              <option value="deny">Deny</option>
+              <option value="allow">Allow</option>
+            </select>
+            <button class="btn primary" type="submit">Add</button>
+          </form>
+          <div class="list-tabs" role="tablist">
+            <button class="tab is-active" type="button" data-filter="deny/exact">Denied</button>
+            <button class="tab" type="button" data-filter="allow/exact">Allowed</button>
+          </div>
+          <ul id="domain-list" class="domain-list"></ul>
+        </section>
+
+        <section class="panel" aria-labelledby="activity-title">
+          <div class="panel-head">
+            <h2 id="activity-title">Recent blocks</h2>
+            <p>Latest domains stopped by gravity and your deny list.</p>
+          </div>
+          <ul id="recent-list" class="plain-list"></ul>
+          <div class="panel-head secondary">
+            <h3>Top blocked</h3>
+          </div>
+          <ul id="top-list" class="plain-list"></ul>
+        </section>
+
+        <section class="panel" aria-labelledby="setup-title">
+          <div class="panel-head">
+            <h2 id="setup-title">DNS setup</h2>
+            <p>Point your router or devices at Pi-hole so ads are filtered network-wide.</p>
+          </div>
+          <ol id="setup-steps" class="setup-steps">
+            <li>Give this Home Assistant host a static LAN IP.</li>
+            <li>Set router DHCP DNS to the address shown below.</li>
+            <li>Renew leases on phones, TVs, and computers.</li>
+          </ol>
+          <div id="dns-ips" class="dns-ips"></div>
+          <div class="action-row">
+            <button id="btn-gravity" class="btn ghost" type="button">Update gravity</button>
+            <button id="btn-flush" class="btn ghost" type="button">Flush query log</button>
+            <button id="btn-refresh" class="btn ghost" type="button">Refresh</button>
+          </div>
+          <p id="version-line" class="version-line"></p>
+          <pre id="action-log" class="action-log" hidden></pre>
+        </section>
+      </div>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

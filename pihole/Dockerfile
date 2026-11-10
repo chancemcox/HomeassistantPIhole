@@ -1,0 +1,26 @@
+ARG BUILD_FROM=pihole/pihole:2026.10.1
+# hadolint ignore=DL3006
+FROM ${BUILD_FROM}
+
+# Management UI dependencies (stdlib-only Python server; jq for options parsing)
+RUN apk add --no-cache \
+    python3 \
+    jq \
+    tini
+
+COPY rootfs /
+
+RUN chmod a+x /ha-entrypoint.sh \
+    && chmod a+x /opt/pihole-ha/server.py
+
+ENV FTLCONF_webserver_port="8080" \
+    FTLCONF_dns_listeningMode="ALL" \
+    PIHOLE_HA_UI_PORT="8099" \
+    PIHOLE_API_BASE="http://127.0.0.1:8080"
+
+EXPOSE 53/tcp 53/udp 8080/tcp 8099/tcp
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
+  CMD dig +short +norecurse +retry=0 @127.0.0.1 pi.hole >/dev/null || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--", "/ha-entrypoint.sh"]
