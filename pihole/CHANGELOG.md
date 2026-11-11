@@ -1,9 +1,14 @@
 # Changelog
 
+## 1.10.9
+
+- Stop assuming AdGuard when the owner is unknown — scan **all** started add-ons for port 53, use `fuser`/`host_pid` for process names, and tell users to check any DNS add-on
+- Clearer LAN conflict copy when `192.168.x.x:53` is taken without naming a product
+
 ## 1.10.8
 
-- When port 53 is taken on the **LAN IP** (not just localhost), spell out that another DNS server (usually AdGuard) must be stopped — Pi-hole cannot share that address
-- Scan host processes for AdGuard/dnsmasq names and probe AdGuard’s admin UI more aggressively when Supervisor cannot list add-ons
+- When port 53 is taken on the **LAN IP** (not just localhost), spell out that another DNS server must be stopped — Pi-hole cannot share that address
+- Scan host processes for DNS binaries and probe common admin UIs when Supervisor cannot list add-ons
 
 ## 1.10.7
 
