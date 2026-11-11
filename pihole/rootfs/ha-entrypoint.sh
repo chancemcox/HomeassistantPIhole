@@ -234,6 +234,9 @@ elif [[ "${PORT53_PLAN}" == LOOPBACK_ONLY* ]]; then
     DNS_LISTENING_MODE="BIND"
     export FTLCONF_dns_listeningMode="BIND"
     export FTLCONF_dns_interface="${LOOP_IFACE}"
+    # dnsmasq implicitly adds loopback even with interface + bind-interfaces.
+    # Exclude it explicitly or FTL still fails on the occupied localhost :53.
+    export FTLCONF_misc_dnsmasq_lines="${FTLCONF_misc_dnsmasq_lines:+${FTLCONF_misc_dnsmasq_lines};}except-interface=lo"
     # Expose to the management UI so Setup can explain the localhost workaround.
     export PIHOLE_HA_DNS_BIND_NOTE="localhost :53 busy; bound to ${LOOP_IFACE} (${LOOP_IP})"
     log_info "  dns_listening_mode=${DNS_LISTENING_MODE} interface=${LOOP_IFACE}"

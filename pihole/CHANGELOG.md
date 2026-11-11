@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.10
+
+- Explicitly exclude loopback when automatically binding DNS to the LAN interface. dnsmasq otherwise still opens localhost port 53 and leaves blocking unavailable.
+- Probe the configured LAN interface in the container health check when DNS uses BIND mode.
+
 ## 1.10.9
 
 - Stop assuming AdGuard when the owner is unknown — scan **all** started add-ons for port 53, use `fuser`/`host_pid` for process names, and tell users to check any DNS add-on

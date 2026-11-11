@@ -272,7 +272,7 @@ import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
-assert cfg.get("version") == "1.10.9", cfg.get("version")
+assert cfg.get("version") == "1.10.10", cfg.get("version")
 assert cfg.get("hassio_role") == "manager", cfg.get("hassio_role")
 assert cfg.get("host_pid") is True, cfg.get("host_pid")
 assert cfg.get("ports", {}).get("53/tcp") == 53

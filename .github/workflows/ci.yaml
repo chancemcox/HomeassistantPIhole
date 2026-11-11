@@ -98,6 +98,12 @@ jobs:
           docker run --rm --entrypoint test pihole-ha:test -f /opt/pihole-ha/static/index.html
           echo "Add-on image smoke checks passed"
 
+      - name: Verify DNS with localhost port 53 occupied
+        run: |
+          docker run --rm --cap-add NET_ADMIN --entrypoint bash \
+            -v "${PWD}/tests/loopback_conflict.sh:/tmp/loopback_conflict.sh:ro" \
+            pihole-ha:test /tmp/loopback_conflict.sh
+
       - name: Assert page HTML from built image
         run: |
           set -euo pipefail

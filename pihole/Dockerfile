@@ -12,6 +12,7 @@ RUN apk add --no-cache \
 COPY rootfs /
 
 RUN chmod a+x /ha-entrypoint.sh \
+    && chmod a+x /opt/pihole-ha/healthcheck.sh \
     && chmod a+x /opt/pihole-ha/server.py \
     && chmod a+x /opt/pihole-ha/resolve_ingress_port.py \
     && chmod a+x /opt/pihole-ha/port53_plan.py
@@ -25,6 +26,6 @@ ENV FTLCONF_webserver_port="8088" \
 EXPOSE 53/tcp 53/udp 8088/tcp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
-  CMD dig +short +norecurse +retry=0 @127.0.0.1 pi.hole >/dev/null || exit 1
+  CMD /opt/pihole-ha/healthcheck.sh
 
 ENTRYPOINT ["/sbin/tini", "--", "/ha-entrypoint.sh"]
