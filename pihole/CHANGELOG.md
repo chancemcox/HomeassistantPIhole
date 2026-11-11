@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.11.0
+
+- Scan private LAN subnets every 10 minutes, key each host by MAC, assign a static `lan-….local` name from that identity, and publish it in Pi-hole local DNS
+- New **Local devices** page in the Ingress UI with rename/override support — custom names stay bound to the MAC when the IP changes
+
 ## 1.10.10
 
 - Explicitly exclude loopback when automatically binding DNS to the LAN interface. dnsmasq otherwise still opens localhost port 53 and leaves blocking unavailable.

@@ -767,3 +767,132 @@ a.dns-chip.admin-chip:hover {
   font-size: 0.9rem;
   line-height: 1.4;
 }
+
+.page-nav {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0 0 1rem;
+  flex-wrap: wrap;
+}
+
+.page-tab {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--secondary-background-color);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.page-tab.is-active {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+
+.page[hidden] {
+  display: none !important;
+}
+
+.devices-panel {
+  margin-top: 0.25rem;
+}
+
+.devices-head {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.devices-meta {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.devices-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--mdc-shape-medium);
+  background: var(--secondary-background-color);
+}
+
+.devices-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.devices-table th,
+.devices-table td {
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.devices-table th {
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.devices-table tr:last-child td {
+  border-bottom: none;
+}
+
+.devices-table code {
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+}
+
+.devices-name-cell {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 14rem;
+}
+
+.devices-name-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.devices-name-input {
+  flex: 1 1 8rem;
+  min-width: 8rem;
+  max-width: 16rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--mdc-shape-small);
+  background: var(--card-background-color, var(--primary-background-color));
+  color: var(--primary-text-color);
+  font: inherit;
+}
+
+.devices-name-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.devices-status {
+  white-space: nowrap;
+}
+
+.devices-status.is-online {
+  color: var(--success-color, #0a7f3f);
+}
+
+.devices-status.is-offline {
+  color: var(--muted);
+}

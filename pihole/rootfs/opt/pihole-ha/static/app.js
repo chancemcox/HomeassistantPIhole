@@ -29,6 +29,11 @@ const els = {
   trafficEmpty: document.getElementById("traffic-empty"),
   queryLog: document.getElementById("query-log"),
   topClients: document.getElementById("top-clients"),
+  devicesBody: document.getElementById("devices-body"),
+  devicesMeta: document.getElementById("devices-meta"),
+  devicesError: document.getElementById("devices-error"),
+  pageOverview: document.getElementById("page-overview"),
+  pageDevices: document.getElementById("page-devices"),
 };
 
 function fmt(n) {
@@ -547,6 +552,191 @@ document.querySelectorAll(".tab").forEach((tab) => {
       showLog(`Load domains failed: ${error.message}`);
     }
   });
+});
+
+function showDevicesError(text) {
+  if (!els.devicesError) return;
+  if (!text) {
+    els.devicesError.hidden = true;
+    els.devicesError.textContent = "";
+    return;
+  }
+  els.devicesError.hidden = false;
+  els.devicesError.textContent = text;
+}
+
+function deviceDisplayName(device) {
+  const hostname = String(device?.hostname || "").replace(/\.local$/i, "");
+  return hostname || "";
+}
+
+async function saveDeviceHostname(deviceId, rawName) {
+  const hostname = String(rawName || "").trim();
+  const result = await api("/api/devices/hostname", {
+    method: "POST",
+    body: JSON.stringify({
+      device_id: deviceId,
+      hostname: hostname === "" ? "" : hostname,
+    }),
+  });
+  renderDevices(result);
+  if (!result.ok) {
+    throw new Error(result.error || "Could not save name");
+  }
+  return result;
+}
+
+function renderDevices(data) {
+  const devices = data?.devices || [];
+  const lastScan = data?.last_scan ? new Date(data.last_scan).toLocaleString() : "never";
+  const subnets = (data?.subnets || []).join(", ") || "none detected";
+  const intervalMin = Math.round((data?.interval_sec || 600) / 60);
+  if (els.devicesMeta) {
+    els.devicesMeta.textContent = data?.scanning
+      ? `Scan in progress… (${devices.length} known so far)`
+      : `${devices.length} device(s) · last scan ${lastScan} · every ${intervalMin} min · subnets ${subnets}`;
+  }
+  if (!els.devicesBody) return;
+  els.devicesBody.innerHTML = "";
+  if (!devices.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "empty";
+    cell.textContent = "No devices discovered yet. Run Scan now or wait for the next automatic pass.";
+    row.appendChild(cell);
+    els.devicesBody.appendChild(row);
+    return;
+  }
+  for (const device of devices) {
+    const row = document.createElement("tr");
+    row.dataset.deviceId = device.id || "";
+
+    const name = document.createElement("td");
+    name.className = "devices-name-cell";
+    const nameRow = document.createElement("div");
+    nameRow.className = "devices-name-row";
+    const input = document.createElement("input");
+    input.className = "devices-name-input";
+    input.type = "text";
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.placeholder = deviceDisplayName({ hostname: device.default_hostname }) || "name";
+    input.value = deviceDisplayName(device);
+    input.title = "Custom .local name (bound to this device identity)";
+    input.setAttribute("aria-label", `Local DNS name for ${device.ip || device.id || "device"}`);
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn ghost";
+    saveBtn.type = "button";
+    saveBtn.textContent = "Save";
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "btn ghost";
+    resetBtn.type = "button";
+    resetBtn.textContent = "Reset";
+    resetBtn.hidden = !device.override;
+    const hint = document.createElement("p");
+    hint.className = "devices-name-hint";
+    hint.textContent = device.override
+      ? `Custom name · default ${device.default_hostname || "—"}`
+      : device.stable
+        ? `Static from MAC · publishes as ${device.hostname || "—"}`
+        : `Temporary (no MAC yet) · publishes as ${device.hostname || "—"}`;
+    const persistName = async (value) => {
+      showDevicesError("");
+      saveBtn.disabled = true;
+      resetBtn.disabled = true;
+      try {
+        await saveDeviceHostname(device.id, value);
+      } catch (error) {
+        showDevicesError(error.message);
+      } finally {
+        saveBtn.disabled = false;
+        resetBtn.disabled = false;
+      }
+    };
+    saveBtn.addEventListener("click", () => persistName(input.value));
+    resetBtn.addEventListener("click", () => persistName(""));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        persistName(input.value);
+      }
+    });
+    nameRow.append(input, saveBtn, resetBtn);
+    name.append(nameRow, hint);
+
+    const ip = document.createElement("td");
+    ip.textContent = device.ip || "—";
+
+    const mac = document.createElement("td");
+    if (device.mac) {
+      const code = document.createElement("code");
+      code.textContent = device.mac;
+      mac.appendChild(code);
+    } else {
+      mac.textContent = device.id || "—";
+    }
+
+    const status = document.createElement("td");
+    status.className = `devices-status ${device.online === false ? "is-offline" : "is-online"}`;
+    status.textContent = device.online === false ? "Offline" : "Online";
+
+    const seen = document.createElement("td");
+    seen.textContent = device.last_seen ? new Date(device.last_seen).toLocaleString() : "—";
+
+    row.append(name, ip, mac, status, seen);
+    els.devicesBody.appendChild(row);
+  }
+}
+
+async function refreshDevices() {
+  const data = await api("/api/devices");
+  showDevicesError(data?.last_error || "");
+  renderDevices(data);
+  return data;
+}
+
+function showPage(page) {
+  const overview = page !== "devices";
+  if (els.pageOverview) {
+    els.pageOverview.hidden = !overview;
+    els.pageOverview.classList.toggle("is-active", overview);
+  }
+  if (els.pageDevices) {
+    els.pageDevices.hidden = overview;
+    els.pageDevices.classList.toggle("is-active", !overview);
+  }
+  document.querySelectorAll(".page-tab").forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.page === page);
+  });
+  if (page === "devices") {
+    refreshDevices().catch((error) => showDevicesError(error.message));
+  }
+}
+
+document.querySelectorAll(".page-tab").forEach((tab) => {
+  tab.addEventListener("click", () => showPage(tab.dataset.page || "overview"));
+});
+
+document.getElementById("btn-refresh-devices")?.addEventListener("click", () => {
+  refreshDevices().catch((error) => showDevicesError(error.message));
+});
+
+document.getElementById("btn-scan-devices")?.addEventListener("click", async () => {
+  const button = document.getElementById("btn-scan-devices");
+  if (button) button.disabled = true;
+  showDevicesError("");
+  try {
+    const result = await api("/api/devices/scan", { method: "POST", body: "{}" });
+    renderDevices(result);
+    if (!result.ok) {
+      showDevicesError(result.error || "Scan failed");
+    }
+  } catch (error) {
+    showDevicesError(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
 });
 
 async function refreshAll() {

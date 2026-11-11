@@ -25,6 +25,20 @@ This app installs [Pi-hole](https://pi-hole.net/) v6 inside Home Assistant and c
 6. Start the app.
 7. Enable **Show in sidebar** to open the management panel.
 
+## Local devices (`.local` names)
+
+The Ingress UI includes a **Local devices** page. Every 10 minutes the add-on:
+
+1. Discovers private IPv4 subnets on the Home Assistant host
+2. Probes reachable hosts on those subnets (ping / common ports + ARP)
+3. Keys each host by unique hardware identity (**MAC address**)
+4. Assigns a static default `lan-….local` name derived from that MAC
+5. Publishes that name in Pi-hole **Local DNS** records
+
+You can override the `.local` name on the Local devices page. Overrides are stored against the MAC identity, so the custom name stays with the same computer when its IP changes. Clearing the override restores the MAC-derived default.
+
+Use **Scan now** on that page to run a pass immediately. Only RFC1918 private ranges are scanned, and each pass is capped to keep large networks bounded.
+
 ## How to use Pi-hole as DNS
 
 Replace `192.168.1.50` below with the Home Assistant host IP shown in the sidebar under **DNS setup**.

@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <!-- Relative paths required under Home Assistant Ingress (absolute /static breaks). -->
-    <link rel="stylesheet" href="static/styles.css?v=1.10.2" />
+    <link rel="stylesheet" href="static/styles.css?v=1.11.0" />
   </head>
   <body>
     <div class="atmosphere" aria-hidden="true"></div>
@@ -34,6 +34,12 @@
         </div>
       </header>
 
+      <nav class="page-nav" aria-label="Sections">
+        <button class="page-tab is-active" type="button" data-page="overview">Overview</button>
+        <button class="page-tab" type="button" data-page="devices">Local devices</button>
+      </nav>
+
+      <div id="page-overview" class="page is-active">
       <section class="metrics" aria-label="Query metrics">
         <article class="metric" style="--delay: 0ms">
           <span class="metric-label">Queries</span>
@@ -210,7 +216,47 @@
           <pre id="action-log" class="action-log" hidden></pre>
         </section>
       </div>
+      </div>
+
+      <div id="page-devices" class="page" hidden>
+        <section class="panel devices-panel" aria-labelledby="devices-title">
+          <div class="panel-head devices-head">
+            <div>
+              <h2 id="devices-title">Local devices</h2>
+              <p>
+                Scans private LAN subnets every 10 minutes. Each host gets a static
+                <code>*.local</code> name derived from its MAC. Custom names stay bound
+                to that same hardware identity when the IP changes.
+              </p>
+            </div>
+            <div class="cta-row">
+              <button id="btn-scan-devices" class="btn primary" type="button">Scan now</button>
+              <button id="btn-refresh-devices" class="btn ghost" type="button">Refresh</button>
+            </div>
+          </div>
+          <p id="devices-meta" class="devices-meta">Loading…</p>
+          <p id="devices-error" class="banner-warn" hidden></p>
+          <div class="devices-table-wrap">
+            <table class="devices-table" aria-label="Discovered local devices">
+              <thead>
+                <tr>
+                  <th scope="col">.local name</th>
+                  <th scope="col">IP</th>
+                  <th scope="col">MAC / identity</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Last seen</th>
+                </tr>
+              </thead>
+              <tbody id="devices-body">
+                <tr>
+                  <td colspan="5" class="empty">No devices discovered yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </div>
-    <script src="static/app.js?v=1.10.2"></script>
+    <script src="static/app.js?v=1.11.0"></script>
   </body>
 </html>
