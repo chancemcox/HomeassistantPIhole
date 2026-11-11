@@ -219,80 +219,33 @@ elif command -v netstat >/dev/null 2>&1; then
   netstat -lntu 2>/dev/null | while read -r line; do log_debug "  ${line}"; done || true
 fi
 
-# Port 53 conflict is a common HA install failure mode (AdGuard, systemd-resolved,
-# another DNS container, or the host's own stub resolver). Report the owner when possible.
-if command -v ss >/dev/null 2>&1; then
-  if ss -lntu 2>/dev/null | grep -Eq ':53\s'; then
-    log_error "Port 53 is already in use on this host — Pi-hole DNS cannot start"
-    log_error "Stop the other DNS service, then restart this add-on"
-    if ss -lntup 2>/dev/null | grep -Eq ':53\s'; then
-      ss -lntup 2>/dev/null | grep -E ':53\s' | while read -r line; do log_error "  ss: ${line}"; done || true
-    else
-      log_error "  ss could not name the process (likely outside this PID namespace)"
-    fi
-    # Best-effort inode → pid/cmdline mapping for listeners we can see.
-    python3 - <<'PY' 2>/dev/null | while read -r line; do log_error "  ${line}"; done || true
-from pathlib import Path
-import os
-port = 53
-hex_port = f"{port:04X}"
-inode_pids = {}
-for entry in Path("/proc").iterdir():
-    if not entry.name.isdigit():
-        continue
-    fd_dir = entry / "fd"
-    try:
-        for fd in fd_dir.iterdir():
-            try:
-                target = os.readlink(fd)
-            except OSError:
-                continue
-            if target.startswith("socket:["):
-                try:
-                    inode_pids.setdefault(int(target[8:-1]), []).append(int(entry.name))
-                except ValueError:
-                    pass
-    except OSError:
-        pass
-found = False
-for table in ("udp", "tcp", "udp6", "tcp6"):
-    path = Path(f"/proc/net/{table}")
-    try:
-        lines = path.read_text().splitlines()[1:]
-    except OSError:
-        continue
-    for line in lines:
-        parts = line.split()
-        if len(parts) < 10:
-            continue
-        local = parts[1]
-        if not local.upper().endswith(":" + hex_port):
-            continue
-        if table.startswith("tcp") and parts[3] != "0A":
-            continue
-        inode = int(parts[9])
-        proto = table.replace("6", "").upper()
-        pids = inode_pids.get(inode) or []
-        if not pids:
-            print(f"proc: {proto} inode={inode} (process not visible here)")
-            found = True
-            continue
-        for pid in pids:
-            try:
-                comm = (Path(f"/proc/{pid}/comm").read_text().strip())
-            except OSError:
-                comm = "?"
-            try:
-                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace").strip()[:160]
-            except OSError:
-                cmd = ""
-            print(f"proc: {proto} pid={pid} {comm} {cmd}".strip())
-            found = True
-if not found:
-    print("proc: no listeners mapped for port 53")
-PY
+# Port 53 conflict is a common HA install failure mode (AdGuard on localhost,
+# systemd-resolved, another DNS add-on). When ONLY loopback holds :53, bind
+# Pi-hole to the LAN interface instead of ALL so DNS can still start.
+PORT53_PLAN="$(python3 /opt/pihole-ha/port53_plan.py 2>/dev/null || echo FREE)"
+log_info "Port 53 plan: ${PORT53_PLAN}"
+if [[ "${PORT53_PLAN}" == "FREE" ]]; then
+  log_info "Port 53 appears free for Pi-hole DNS"
+elif [[ "${PORT53_PLAN}" == LOOPBACK_ONLY* ]]; then
+  LOOP_IFACE="$(printf '%s' "${PORT53_PLAN}" | sed -n 's/.*iface=\([^ ]*\).*/\1/p')"
+  LOOP_IP="$(printf '%s' "${PORT53_PLAN}" | sed -n 's/.*ip=\([^ ]*\).*/\1/p')"
+  if [[ -n "${LOOP_IFACE}" && "${DNS_LISTENING_MODE}" == "ALL" ]]; then
+    log_warn "Port 53 is only busy on localhost (often AdGuard). Binding Pi-hole DNS to ${LOOP_IFACE} (${LOOP_IP}) instead of ALL"
+    DNS_LISTENING_MODE="BIND"
+    export FTLCONF_dns_listeningMode="BIND"
+    export FTLCONF_dns_interface="${LOOP_IFACE}"
+    # Expose to the management UI so Setup can explain the localhost workaround.
+    export PIHOLE_HA_DNS_BIND_NOTE="localhost :53 busy; bound to ${LOOP_IFACE} (${LOOP_IP})"
+    log_info "  dns_listening_mode=${DNS_LISTENING_MODE} interface=${LOOP_IFACE}"
   else
-    log_info "Port 53 appears free for Pi-hole DNS"
+    log_warn "Port 53 busy on localhost; listening mode is ${DNS_LISTENING_MODE} (not auto-switching)"
+  fi
+elif [[ "${PORT53_PLAN}" == CONFLICT* ]]; then
+  log_error "Port 53 is already in use on this host — Pi-hole DNS may fail to start"
+  log_error "  ${PORT53_PLAN}"
+  log_error "Stop the other DNS service (AdGuard, dnsmasq, etc.), then restart this add-on"
+  if command -v ss >/dev/null 2>&1; then
+    ss -lntup 2>/dev/null | grep -E ':53\s' | while read -r line; do log_error "  ss: ${line}"; done || true
   fi
 fi
 

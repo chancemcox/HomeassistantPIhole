@@ -265,7 +265,7 @@ Your add-on log will show `failed to create listening socket for port 53: Addres
 - `systemd-resolved` / another host DNS stub
 - A second Pi-hole container
 
-The management UI and **Enable blocking** error name the process or Supervisor add-on holding port 53 when it can be identified (requires `hassio_role: manager`). A localhost-only bind on `127.0.0.1:53` / `[::1]:53` usually means **AdGuard Home** (or another DNS add-on); `127.0.0.53:53` usually means **systemd-resolved**. Stop that add-on under **Settings → Add-ons**, free port **53/udp** and **53/tcp**, then restart Pi-hole. Until then the management UI can still load, but network-wide DNS blocking will not work (`DNS resolver is not running`).
+The management UI and **Enable blocking** error name the process or Supervisor add-on holding port 53 when it can be identified. A localhost-only bind on `127.0.0.1:53` / `[::1]:53` usually means **AdGuard Home**. In that case **1.10.7+** automatically switches Pi-hole to `BIND` on your LAN interface so DNS can start beside the localhost stub—point devices at the LAN IP shown in Setup. If another service also owns the LAN address on port 53, stop that add-on under **Settings → Add-ons**, then restart Pi-hole.
 
 ## Options
 

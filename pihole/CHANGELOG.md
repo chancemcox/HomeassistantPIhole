@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.7
+
+- When port 53 is busy **only on localhost** (`127.0.0.1` / `::1`, typical AdGuard), auto-bind Pi-hole DNS to the LAN interface (`BIND`) so blocking can start without stopping the peer
+- Enable `host_pid` so owner errors can name the real process (e.g. `AdGuardHome`)
+
 ## 1.10.6
 
 - Set `hassio_role: manager` so the UI can **name the conflicting DNS add-on** via Supervisor (`GET /addons` needs manager, not default)

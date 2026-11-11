@@ -31,6 +31,8 @@ API_BASE = os.environ.get("PIHOLE_API_BASE", "http://127.0.0.1:8088").rstrip("/"
 PASSWORD = os.environ.get("PIHOLE_HA_PASSWORD", "")
 UI_PORT = int(os.environ.get("PIHOLE_HA_UI_PORT", "8189"))
 DNS_PORT = int(os.environ.get("PIHOLE_DNS_PORT", "53"))
+DNS_BIND_INTERFACE = (os.environ.get("FTLCONF_dns_interface") or "").strip()
+DNS_LISTENING_MODE = (os.environ.get("FTLCONF_dns_listeningMode") or "ALL").strip()
 LOG_LEVEL_NAME = os.environ.get("PIHOLE_HA_LOG_LEVEL", "info").upper()
 AUTO_BLOCK_HULU_ADS = os.environ.get("PIHOLE_HA_BLOCK_HULU_ADS", "false").lower() in {
     "1",
@@ -778,48 +780,85 @@ def describe_port_owners(port: int = DNS_PORT) -> dict[str, Any]:
     return {"port": port, "owners": owners, "summary": summary}
 
 
-def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
-    """Probe DNS on 127.0.0.1:<port> and report who owns the port when it fails."""
+def _dns_answers_on(host: str, port: int = DNS_PORT) -> bool:
+    """Return True when host:port answers a minimal DNS query."""
     # Minimal DNS query (transaction 0xaaaa, A for ".")
     query = b"\xaa\xaa\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01"
-    ownership = describe_port_owners(port)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(1.0)
-            sock.sendto(query, ("127.0.0.1", port))
+            sock.sendto(query, (host, port))
             sock.recvfrom(512)
-        # Something answered — treat as OK unless we can prove it is not pihole-FTL.
-        foreign = [
-            o
-            for o in ownership["owners"]
-            if o.get("comm")
-            and "pihole" not in str(o.get("comm", "")).lower()
-            and "ftl" not in str(o.get("comm", "")).lower()
-            and o.get("proto") != "addon"
-        ]
-        if foreign:
-            detail = (
-                f"DNS answers on 127.0.0.1:{port}, but another process also owns the port: "
-                + ownership["summary"]
-            )
-            log.warning("%s", detail)
-            return {
-                "port": port,
-                "busy": True,
-                "detail": detail,
-                "owners": ownership["owners"],
-                "owner_summary": ownership["summary"],
-            }
+        return True
+    except OSError:
+        return False
+
+
+def _ftl_process_running() -> bool:
+    """Best-effort check that pihole-FTL is alive in this PID namespace."""
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="replace").strip().lower()
+        except OSError:
+            continue
+        if "pihole-ftl" in comm or comm == "pihole-ftl":
+            return True
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
+                "utf-8", errors="replace"
+            ).lower()
+        except OSError:
+            continue
+        if "pihole-ftl" in cmdline:
+            return True
+    return False
+
+
+def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
+    """Probe DNS on LAN (preferred) and localhost; report owners when Pi-hole cannot serve."""
+    ownership = describe_port_owners(port)
+    lan_ips = detect_host_ips()
+    lan = lan_ips[0] if lan_ips else None
+    lan_ok = bool(lan) and _dns_answers_on(lan, port)
+    loop_ok = _dns_answers_on("127.0.0.1", port)
+
+    pihole_listeners = [
+        o
+        for o in ownership["owners"]
+        if "pihole" in str(o.get("comm", "")).lower()
+        or "ftl" in str(o.get("comm", "")).lower()
+        or "pihole" in str(o.get("cmdline", "")).lower()
+    ]
+    pihole_serving = bool(pihole_listeners) or _ftl_process_running()
+
+    # Healthy only when Pi-hole itself is the responder (AdGuard on LAN must stay busy).
+    if pihole_serving and (lan_ok or loop_ok):
+        where = lan if lan_ok and lan else "127.0.0.1"
+        detail = f"DNS responding on {where}:{port}"
+        if DNS_BIND_INTERFACE:
+            detail += f" (listening mode {DNS_LISTENING_MODE or 'BIND'} on {DNS_BIND_INTERFACE})"
         return {
             "port": port,
             "busy": False,
-            "detail": "DNS responding on 127.0.0.1",
+            "detail": detail,
             "owners": ownership["owners"],
             "owner_summary": ownership["summary"],
         }
-    except OSError as exc:
+
+    if lan_ok or loop_ok:
+        where = []
+        if lan_ok and lan:
+            where.append(f"{lan}:{port}")
+        if loop_ok:
+            where.append(f"127.0.0.1:{port}")
         detail = (
-            f"no DNS response on 127.0.0.1:{port} ({exc}). "
+            f"DNS answers on {', '.join(where)}, but the responder is not Pi-hole. "
             f"Port {port} owner: {ownership['summary']}"
         )
         log.warning("%s", detail)
@@ -830,6 +869,20 @@ def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
             "owners": ownership["owners"],
             "owner_summary": ownership["summary"],
         }
+
+    detail = (
+        f"no DNS response on LAN"
+        + (f" {lan}:{port}" if lan else "")
+        + f" or 127.0.0.1:{port}. Port {port} owner: {ownership['summary']}"
+    )
+    log.warning("%s", detail)
+    return {
+        "port": port,
+        "busy": True,
+        "detail": detail,
+        "owners": ownership["owners"],
+        "owner_summary": ownership["summary"],
+    }
 
 
 def enrich_dns_failure(result: Any, port: int = DNS_PORT) -> Any:
@@ -1026,6 +1079,8 @@ class Handler(BaseHTTPRequestHandler):
                     "dns_port_detail": port_status["detail"],
                     "dns_port_owners": port_status.get("owners") or [],
                     "dns_port_owner_summary": port_status.get("owner_summary") or "",
+                    "dns_listening_mode": DNS_LISTENING_MODE,
+                    "dns_bind_interface": DNS_BIND_INTERFACE,
                     "admin_port": ADMIN_PORT,
                     "admin_urls": [f"http://{ip}:{ADMIN_PORT}/admin" for ip in ips],
                     "example_ip": example_ip,
