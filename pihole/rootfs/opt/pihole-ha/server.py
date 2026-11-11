@@ -781,6 +781,7 @@ def describe_port_owners(port: int = DNS_PORT) -> dict[str, Any]:
 
 
 def _dns_answers_on(host: str, port: int = DNS_PORT) -> bool:
+    """Return True when host:port answers a minimal DNS query."""
     # Minimal DNS query (transaction 0xaaaa, A for ".")
     query = b"\xaa\xaa\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01"
     try:
@@ -791,6 +792,32 @@ def _dns_answers_on(host: str, port: int = DNS_PORT) -> bool:
         return True
     except OSError:
         return False
+
+
+def _ftl_process_running() -> bool:
+    """Best-effort check that pihole-FTL is alive in this PID namespace."""
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="replace").strip().lower()
+        except OSError:
+            continue
+        if "pihole-ftl" in comm or comm == "pihole-ftl":
+            return True
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
+                "utf-8", errors="replace"
+            ).lower()
+        except OSError:
+            continue
+        if "pihole-ftl" in cmdline:
+            return True
+    return False
 
 
 def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
@@ -808,10 +835,12 @@ def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
         or "ftl" in str(o.get("comm", "")).lower()
         or "pihole" in str(o.get("cmdline", "")).lower()
     ]
+    pihole_serving = bool(pihole_listeners) or _ftl_process_running()
 
-    # Success: Pi-hole is serving on the LAN address (even if AdGuard keeps localhost).
-    if lan_ok and (pihole_listeners or DNS_LISTENING_MODE.upper() == "BIND" or not loop_ok):
-        detail = f"DNS responding on {lan}:{port}"
+    # Healthy only when Pi-hole itself is the responder (AdGuard on LAN must stay busy).
+    if pihole_serving and (lan_ok or loop_ok):
+        where = lan if lan_ok and lan else "127.0.0.1"
+        detail = f"DNS responding on {where}:{port}"
         if DNS_BIND_INTERFACE:
             detail += f" (listening mode {DNS_LISTENING_MODE or 'BIND'} on {DNS_BIND_INTERFACE})"
         return {
@@ -821,19 +850,16 @@ def dns_port_status(port: int = DNS_PORT) -> dict[str, Any]:
             "owners": ownership["owners"],
             "owner_summary": ownership["summary"],
         }
-    if lan_ok or (loop_ok and pihole_listeners):
-        return {
-            "port": port,
-            "busy": False,
-            "detail": f"DNS responding on {lan or '127.0.0.1'}:{port}",
-            "owners": ownership["owners"],
-            "owner_summary": ownership["summary"],
-        }
-    if loop_ok and not lan_ok:
+
+    if lan_ok or loop_ok:
+        where = []
+        if lan_ok and lan:
+            where.append(f"{lan}:{port}")
+        if loop_ok:
+            where.append(f"127.0.0.1:{port}")
         detail = (
-            f"DNS answers only on 127.0.0.1:{port}, not on LAN"
-            + (f" {lan}:{port}" if lan else "")
-            + f". Port {port} owner: {ownership['summary']}"
+            f"DNS answers on {', '.join(where)}, but the responder is not Pi-hole. "
+            f"Port {port} owner: {ownership['summary']}"
         )
         log.warning("%s", detail)
         return {

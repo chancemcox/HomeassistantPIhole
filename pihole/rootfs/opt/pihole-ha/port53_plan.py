@@ -20,6 +20,7 @@ PORT = 53
 
 
 def _ss_lines() -> list[str]:
+    """Return normalized `ss -lntu` rows that mention port 53."""
     if not shutil.which("ss"):
         return []
     try:
@@ -40,22 +41,27 @@ def _ss_lines() -> list[str]:
 
 
 def _local_addrs(lines: list[str]) -> set[str]:
+    """Extract listener addresses from ss rows, including `%zone` suffixes."""
     addrs: set[str] = set()
     for line in lines:
-        match = re.search(rf"\[([^\]]+)\]:{PORT}\b", line)
+        match = re.search(rf"\[([^\]]+)\](?:%[^\]\s]+)?:{PORT}\b", line)
         if match:
             addrs.add(match.group(1).lower())
             continue
-        match = re.search(rf"(\d+\.\d+\.\d+\.\d+):{PORT}\b", line)
+        match = re.search(rf"(\d+\.\d+\.\d+\.\d+)(?:%\S+)?:{PORT}\b", line)
         if match:
             addrs.add(match.group(1))
             continue
         if re.search(rf"\*:{PORT}\b|0\.0\.0\.0:{PORT}\b", line):
             addrs.add("0.0.0.0")
+            continue
+        # Unparsed :53 listener — treat as non-loopback so we do not claim FREE.
+        addrs.add("unparsed")
     return addrs
 
 
 def _is_loopback(addr: str) -> bool:
+    """Return True when addr is a loopback / resolved-stub address."""
     a = addr.lower()
     return a in {"127.0.0.1", "127.0.0.53", "127.0.0.54", "::1", "localhost"} or a.startswith(
         "127."
@@ -98,6 +104,7 @@ def _primary_lan() -> tuple[str | None, str | None]:
 
 
 def plan() -> str:
+    """Classify port-53 occupancy for the HA entrypoint."""
     lines = _ss_lines()
     if not lines:
         return "FREE"
@@ -106,19 +113,19 @@ def plan() -> str:
         return "FREE"
 
     if any(not _is_loopback(a) for a in addrs):
-        # Wildcard or LAN already taken — Pi-hole cannot share port 53.
+        # Wildcard, LAN, or unparsed listener — Pi-hole cannot safely share port 53.
         summary = ", ".join(sorted(f"{a}:{PORT}" for a in addrs))
         return f"CONFLICT summary={summary}"
 
     iface, ip_addr = _primary_lan()
     if not ip_addr:
         return "CONFLICT summary=loopback-only but no LAN IP detected"
-    # Prefer an interface name for FTL BIND mode; fall back to IP as interface hint.
-    target = iface or ip_addr
-    return f"LOOPBACK_ONLY iface={target} ip={ip_addr}"
+    # FTL BIND mode needs a real interface name; leave iface empty when unknown.
+    return f"LOOPBACK_ONLY iface={iface or ''} ip={ip_addr}"
 
 
 def main() -> int:
+    """CLI entrypoint used by ha-entrypoint.sh."""
     print(plan())
     return 0
 

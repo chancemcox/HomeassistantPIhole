@@ -311,7 +311,14 @@ plan_mod._ss_lines = lambda: [
 ]
 plan_mod._primary_lan = lambda: ("eth0", "192.168.1.50")
 assert plan_mod.plan() == "LOOPBACK_ONLY iface=eth0 ip=192.168.1.50", plan_mod.plan()
+plan_mod._primary_lan = lambda: (None, "192.168.1.50")
+assert plan_mod.plan() == "LOOPBACK_ONLY iface= ip=192.168.1.50", plan_mod.plan()
 plan_mod._ss_lines = lambda: ["udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:*"]
+assert plan_mod.plan().startswith("CONFLICT"), plan_mod.plan()
+plan_mod._primary_lan = lambda: ("eth0", "192.168.1.50")
+plan_mod._ss_lines = lambda: ["udp UNCONN 0 0 127.0.0.53%lo:53 0.0.0.0:*"]
+assert plan_mod.plan() == "LOOPBACK_ONLY iface=eth0 ip=192.168.1.50", plan_mod.plan()
+plan_mod._ss_lines = lambda: ["udp UNCONN 0 0 mystery:53 0.0.0.0:*"]
 assert plan_mod.plan().startswith("CONFLICT"), plan_mod.plan()
 plan_mod._ss_lines = lambda: []
 assert plan_mod.plan() == "FREE", plan_mod.plan()
