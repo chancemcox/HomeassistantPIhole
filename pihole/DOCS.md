@@ -265,7 +265,7 @@ Your add-on log will show `failed to create listening socket for port 53: Addres
 - `systemd-resolved` / another host DNS stub
 - A second Pi-hole container
 
-The management UI and **Enable blocking** error name the process or Supervisor add-on holding port 53 when it can be identified. A localhost-only bind on `127.0.0.1:53` / `[::1]:53` usually means **AdGuard Home**. In that case **1.10.7+** automatically switches Pi-hole to `BIND` on your LAN interface so DNS can start beside the localhost stub—point devices at the LAN IP shown in Setup. If another service also owns the LAN address on port 53, stop that add-on under **Settings → Add-ons**, then restart Pi-hole.
+The management UI and **Enable blocking** error name the process or Supervisor add-on holding port 53 when it can be identified. A localhost-only bind on `127.0.0.1:53` / `[::1]:53` lets **1.10.7+** auto-bind Pi-hole to the LAN interface. If the error lists your **LAN IP** on port 53 (for example `192.168.x.x:53`), another DNS service already owns that address — check **Settings → Add-ons** for dnsmasq, unbound, Technitium, or any other DNS-related add-on, stop it, then restart Pi-hole. Two DNS servers cannot share the same host IP on port 53.
 
 ## Options
 

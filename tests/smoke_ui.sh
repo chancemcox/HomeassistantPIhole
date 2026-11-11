@@ -272,14 +272,14 @@ import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
-assert cfg.get("version") == "1.10.7", cfg.get("version")
+assert cfg.get("version") == "1.10.9", cfg.get("version")
 assert cfg.get("hassio_role") == "manager", cfg.get("hassio_role")
 assert cfg.get("host_pid") is True, cfg.get("host_pid")
 assert cfg.get("ports", {}).get("53/tcp") == 53
 assert cfg.get("ports", {}).get("8088/tcp") == 8088
 print("config ingress_port=8189 OK")
 
-# Humanized owner summary for the common AdGuard localhost bind pattern.
+# Humanized owner summary for localhost-only bind (no AdGuard assumption).
 summary = mod._humanize_port_owner_summary(
     53,
     [
@@ -291,9 +291,23 @@ summary = mod._humanize_port_owner_summary(
     [],
 )
 assert "localhost DNS" in summary, summary
-assert "AdGuard" in summary, summary
+assert "Add-ons" in summary, summary
 assert "UNCONN" not in summary and "LISTEN 0 4096" not in summary, summary
 print("humanized localhost port-53 summary OK")
+
+lan_summary = mod._humanize_port_owner_summary(
+    53,
+    [
+        {"proto": "UDP", "address": "127.0.0.1", "comm": "", "detail": "UDP listener on 127.0.0.1:53"},
+        {"proto": "UDP", "address": "192.168.2.101", "comm": "", "detail": "UDP listener on 192.168.2.101:53"},
+        {"proto": "UDP", "address": "::1", "comm": "", "detail": "UDP listener on ::1:53"},
+    ],
+    [],
+)
+assert "192.168.2.101:53" in lan_summary, lan_summary
+assert "AdGuard" not in lan_summary, lan_summary
+assert "two DNS servers" in lan_summary or "Add-ons" in lan_summary, lan_summary
+print("humanized LAN port-53 conflict summary OK")
 
 # port53_plan: loopback-only should recommend LAN BIND; wildcard is CONFLICT.
 spec_plan = importlib.util.spec_from_file_location(

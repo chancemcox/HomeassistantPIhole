@@ -1,5 +1,5 @@
 name: Pi-hole
-version: "1.10.7"
+version: "1.10.9"
 slug: pihole
 description: Network-wide ad blocking DNS server powered by Pi-hole v6
 url: https://github.com/chancemcox/HomeassistantPIhole
