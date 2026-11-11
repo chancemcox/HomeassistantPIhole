@@ -8,7 +8,8 @@ cd "${ROOT}"
 python3 -m py_compile \
   pihole/rootfs/opt/pihole-ha/server.py \
   pihole/rootfs/opt/pihole-ha/presets.py \
-  pihole/rootfs/opt/pihole-ha/resolve_ingress_port.py
+  pihole/rootfs/opt/pihole-ha/resolve_ingress_port.py \
+  pihole/rootfs/opt/pihole-ha/port53_plan.py
 
 python3 <<'PY'
 import importlib.util
@@ -271,8 +272,9 @@ import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
-assert cfg.get("version") == "1.10.6", cfg.get("version")
+assert cfg.get("version") == "1.10.7", cfg.get("version")
 assert cfg.get("hassio_role") == "manager", cfg.get("hassio_role")
+assert cfg.get("host_pid") is True, cfg.get("host_pid")
 assert cfg.get("ports", {}).get("53/tcp") == 53
 assert cfg.get("ports", {}).get("8088/tcp") == 8088
 print("config ingress_port=8189 OK")
@@ -292,6 +294,28 @@ assert "localhost DNS" in summary, summary
 assert "AdGuard" in summary, summary
 assert "UNCONN" not in summary and "LISTEN 0 4096" not in summary, summary
 print("humanized localhost port-53 summary OK")
+
+# port53_plan: loopback-only should recommend LAN BIND; wildcard is CONFLICT.
+spec_plan = importlib.util.spec_from_file_location(
+    "port53_plan",
+    ROOT / "pihole/rootfs/opt/pihole-ha/port53_plan.py",
+)
+plan_mod = importlib.util.module_from_spec(spec_plan)
+assert spec_plan.loader is not None
+spec_plan.loader.exec_module(plan_mod)
+plan_mod._ss_lines = lambda: [
+    "udp UNCONN 0 0 127.0.0.1:53 0.0.0.0:*",
+    "udp UNCONN 0 0 [::1]:53 [::]:*",
+    "tcp LISTEN 0 4096 127.0.0.1:53 0.0.0.0:*",
+    "tcp LISTEN 0 4096 [::1]:53 [::]:*",
+]
+plan_mod._primary_lan = lambda: ("eth0", "192.168.1.50")
+assert plan_mod.plan() == "LOOPBACK_ONLY iface=eth0 ip=192.168.1.50", plan_mod.plan()
+plan_mod._ss_lines = lambda: ["udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:*"]
+assert plan_mod.plan().startswith("CONFLICT"), plan_mod.plan()
+plan_mod._ss_lines = lambda: []
+assert plan_mod.plan() == "FREE", plan_mod.plan()
+print("port53_plan OK")
 
 print("UI smoke test passed (page shows)")
 PY
