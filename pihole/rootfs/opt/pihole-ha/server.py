@@ -24,6 +24,8 @@ sys_path_dir = str(Path(__file__).resolve().parent)
 if sys_path_dir not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path_dir)
 
+from devices import load_state as load_device_state  # noqa: E402
+from devices import run_scan_and_sync, set_device_hostname, start_background_scanner  # noqa: E402
 from presets import HULU_ADS_PRESET, PRESETS, list_presets  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -64,7 +66,7 @@ def _admin_port_from_api_base(api_base: str) -> int:
 ADMIN_PORT = int(os.environ.get("PIHOLE_ADMIN_PORT", str(_admin_port_from_api_base(API_BASE))))
 
 _session_lock = threading.Lock()
-_session: dict[str, Any] = {"sid": None, "expires": 0.0}
+_session: dict[str, Any] = {"sid": None, "csrf": None, "expires": 0.0}
 
 # Common Home Assistant DNS add-ons that collide on host port 53.
 _KNOWN_DNS_SLUGS = {
@@ -120,6 +122,7 @@ def api_request(
     path: str,
     body: dict[str, Any] | None = None,
     sid: str | None = None,
+    csrf: str | None = None,
     timeout: float = 30.0,
 ) -> tuple[int, Any, dict[str, str]]:
     url = f"{API_BASE}{path}"
@@ -135,6 +138,10 @@ def api_request(
         log.debug("API %s %s", method, path)
     if sid:
         headers["X-FTL-SID"] = sid
+        headers["sid"] = sid
+    if csrf:
+        headers["X-FTL-CSRF"] = csrf
+        headers["X-CSRF-Token"] = csrf
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     started = time.time()
@@ -196,6 +203,7 @@ def authenticate(force: bool = False) -> str | None:
         if status >= 400 or not isinstance(payload, dict):
             log.error("Auth failed (%s): %s", status, payload)
             _session["sid"] = None
+            _session["csrf"] = None
             return None
 
         session = payload.get("session") or {}
@@ -203,11 +211,13 @@ def authenticate(force: bool = False) -> str | None:
             if not session.get("sid"):
                 log.error("Auth rejected: %s", payload)
                 _session["sid"] = None
+                _session["csrf"] = None
                 return None
 
         sid = session.get("sid")
         validity = float(session.get("validity") or 1800)
         _session["sid"] = sid
+        _session["csrf"] = session.get("csrf")
         _session["expires"] = now + validity
         log.info("Authenticated with Pi-hole (validity=%ss)", int(validity))
         return sid
@@ -220,13 +230,15 @@ def authed_request(
     timeout: float = 30.0,
 ) -> tuple[int, Any]:
     sid = authenticate()
+    csrf = _session.get("csrf")
     if not sid and PASSWORD:
         log.warning("No SID available before %s %s", method, path)
-    status, payload, _ = api_request(method, path, body, sid=sid, timeout=timeout)
+    status, payload, _ = api_request(method, path, body, sid=sid, csrf=csrf, timeout=timeout)
     if status == 401:
         log.info("Got 401 for %s %s; forcing re-auth", method, path)
         sid = authenticate(force=True)
-        status, payload, _ = api_request(method, path, body, sid=sid, timeout=timeout)
+        csrf = _session.get("csrf")
+        status, payload, _ = api_request(method, path, body, sid=sid, csrf=csrf, timeout=timeout)
     return status, payload
 
 
@@ -1299,6 +1311,9 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/devices":
+            self._send_json(200, load_device_state())
+            return
         if path == "/api/presets":
             self._send_json(200, {"presets": list_presets()})
             return
@@ -1423,6 +1438,21 @@ class Handler(BaseHTTPRequestHandler):
             log.info("Flushing query logs")
             status, result = authed_request("POST", "/api/action/flush/logs")
             self._send_json(status, result)
+            return
+
+        if path == "/api/devices/scan":
+            log.info("Manual local-device scan requested")
+            result = run_scan_and_sync(authed_request)
+            self._send_json(200 if result.get("ok") else 409, result)
+            return
+
+        if path == "/api/devices/hostname":
+            device_id = str(body.get("device_id") or "").strip()
+            # Empty string clears the override and restores the MAC-derived default.
+            hostname = body.get("hostname")
+            log.info("Local-device hostname override device_id=%s hostname=%s", device_id, hostname)
+            result = set_device_hostname(device_id, hostname, authed_request)
+            self._send_json(200 if result.get("ok") else 400, result)
             return
 
         if path.startswith("/api/presets/") and path.endswith("/apply"):
@@ -1667,6 +1697,8 @@ def main() -> None:
             len(result.get("skipped", [])),
             len(result.get("failed", [])),
         )
+
+    start_background_scanner(authed_request)
 
     # Bind all interfaces so Home Assistant Ingress can reach us with host_network.
     # Access is still restricted by peer IP allow-list.

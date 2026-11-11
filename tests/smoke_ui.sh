@@ -9,7 +9,8 @@ python3 -m py_compile \
   pihole/rootfs/opt/pihole-ha/server.py \
   pihole/rootfs/opt/pihole-ha/presets.py \
   pihole/rootfs/opt/pihole-ha/resolve_ingress_port.py \
-  pihole/rootfs/opt/pihole-ha/port53_plan.py
+  pihole/rootfs/opt/pihole-ha/port53_plan.py \
+  pihole/rootfs/opt/pihole-ha/devices.py
 
 python3 <<'PY'
 import importlib.util
@@ -18,12 +19,13 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 ROOT = Path(".").resolve()
-store = {"domains": []}
+store = {"domains": [], "hosts": ["192.168.1.10 lan-aabbccdd.local"]}
 
 
 class FakePiHole(BaseHTTPRequestHandler):
@@ -43,7 +45,10 @@ class FakePiHole(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         body = json.loads(raw.decode() or "{}")
         if self.path == "/api/auth":
-            return self._json(200, {"session": {"valid": True, "sid": "test-sid", "validity": 1800}})
+            return self._json(
+                200,
+                {"session": {"valid": True, "sid": "test-sid", "csrf": "test-csrf", "validity": 1800}},
+            )
         if self.path.startswith("/api/domains/deny/"):
             kind = self.path.rsplit("/", 1)[-1]
             domain = body.get("domain")
@@ -63,6 +68,21 @@ class FakePiHole(BaseHTTPRequestHandler):
             )
         return self._json(200, {"ok": True})
 
+    def do_PUT(self):
+        if self.path.startswith("/api/config/dns/hosts/"):
+            entry = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
+            if entry not in store["hosts"]:
+                store["hosts"].append(entry)
+            return self._json(200, {"config": {"dns": {"hosts": store["hosts"]}}})
+        return self._json(404, {"error": "missing"})
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/config/dns/hosts/"):
+            entry = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
+            store["hosts"] = [row for row in store["hosts"] if row != entry]
+            return self._json(200, {"config": {"dns": {"hosts": store["hosts"]}}})
+        return self._json(404, {"error": "missing"})
+
     def do_GET(self):
         if self.path.startswith("/api/stats/summary"):
             return self._json(
@@ -78,6 +98,8 @@ class FakePiHole(BaseHTTPRequestHandler):
             return self._json(200, {"version": {}})
         if self.path.startswith("/api/stats/"):
             return self._json(200, {"domains": [], "blocked": []})
+        if self.path.startswith("/api/config/dns/hosts"):
+            return self._json(200, {"config": {"dns": {"hosts": store["hosts"]}}})
         if self.path.startswith("/api/domains"):
             return self._json(200, {"domains": store["domains"]})
         return self._json(404, {"error": "missing"})
@@ -167,6 +189,8 @@ os.environ.update(
     PIHOLE_HA_BLOCK_HULU_ADS="false",
     SUPERVISOR_TOKEN="test-token",
     SUPERVISOR_API_BASE="http://127.0.0.1:18081",
+    PIHOLE_HA_DEVICE_STATE=str(ROOT / ".tmp-devices.json"),
+    PIHOLE_HA_DEVICE_SCAN_INTERVAL="3600",
 )
 
 spec = importlib.util.spec_from_file_location(
@@ -200,6 +224,40 @@ with urllib.request.urlopen("http://127.0.0.1:18099/api/setup", timeout=5) as re
     assert setup.get("admin_port") == 18080, setup
     assert isinstance(setup.get("admin_urls"), list), setup
 
+with urllib.request.urlopen("http://127.0.0.1:18099/api/devices", timeout=5) as response:
+    devices = json.load(response)
+    assert "devices" in devices, devices
+    assert devices.get("interval_sec") == 3600, devices
+print("devices API OK")
+
+spec_devices = importlib.util.spec_from_file_location(
+    "devices",
+    ROOT / "pihole/rootfs/opt/pihole-ha/devices.py",
+)
+devices_mod = importlib.util.module_from_spec(spec_devices)
+assert spec_devices.loader is not None
+spec_devices.loader.exec_module(devices_mod)
+mac = "aa:bb:cc:dd:ee:ff"
+default_name = devices_mod.default_hostname_for(mac, "192.168.1.20")
+assert default_name == devices_mod.default_hostname_for(mac, "192.168.1.99"), "name must be MAC-stable across IP changes"
+assert default_name.endswith(".local") and default_name.startswith("lan-")
+assert devices_mod.device_id_for(mac, "192.168.1.20") == devices_mod.device_id_for(mac, "10.0.0.5")
+assert devices_mod.hostname_for("192.168.1.20", mac, "Living Room") == "living-room.local"
+assert devices_mod.sanitize_override_hostname("office-pc") == "office-pc.local"
+# Merge keeps override on same MAC when IP changes.
+overrides = {devices_mod.device_id_for(mac, "192.168.1.20"): "living-room.local"}
+merged = devices_mod.merge_discovered(
+    [{"ip": "192.168.1.99", "mac": mac, "source": "arp"}],
+    [{"id": devices_mod.device_id_for(mac, "192.168.1.20"), "ip": "192.168.1.20", "mac": mac}],
+    overrides,
+    "2026-01-01T00:00:00Z",
+)
+assert len(merged) == 1
+assert merged[0]["ip"] == "192.168.1.99"
+assert merged[0]["hostname"] == "living-room.local"
+assert merged[0]["override"] == "living-room.local"
+print("devices naming OK")
+
 # Prove the actual page shows (this is what Ingress users see; empty/502 must fail CI).
 with urllib.request.urlopen("http://127.0.0.1:18099/", timeout=5) as response:
     assert response.status == 200, response.status
@@ -215,6 +273,7 @@ assert 'id="traffic-title"' in html, "traffic panel missing from page"
 assert 'id="setup-title"' in html, "DNS setup panel missing from page"
 assert 'id="dns-ips"' in html and 'id="admin-urls"' in html, "port chips missing from page"
 assert 'id="blocking-error"' in html, "blocking error banner missing from page"
+assert 'id="page-devices"' in html and 'id="devices-title"' in html, "devices page missing"
 assert 'src="static/app.js' in html, html[:500]
 assert 'href="static/styles.css' in html, html[:500]
 assert 'href="/static/' not in html and 'src="/static/' not in html, "absolute /static paths break HA Ingress"
@@ -226,6 +285,7 @@ with urllib.request.urlopen("http://127.0.0.1:18099/static/app.js", timeout=5) a
     assert "refreshSetup" in js
     assert "admin_port" in js or "adminUrls" in js
     assert "UI_BASE" in js and "uiUrl" in js, "Ingress-relative URL helper missing"
+    assert "/api/devices/hostname" in js and "saveDeviceHostname" in js, "device rename UI missing"
 print("static/app.js OK")
 
 with urllib.request.urlopen("http://127.0.0.1:18099/static/styles.css", timeout=5) as response:
@@ -272,7 +332,7 @@ import yaml
 
 cfg = yaml.safe_load((ROOT / "pihole/config.yaml").read_text())
 assert cfg.get("ingress_port") == 8189, cfg.get("ingress_port")
-assert cfg.get("version") == "1.10.10", cfg.get("version")
+assert cfg.get("version") == "1.11.0", cfg.get("version")
 assert cfg.get("hassio_role") == "manager", cfg.get("hassio_role")
 assert cfg.get("host_pid") is True, cfg.get("host_pid")
 assert cfg.get("ports", {}).get("53/tcp") == 53
