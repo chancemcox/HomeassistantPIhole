@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.8
+
+- When port 53 is taken on the **LAN IP** (not just localhost), spell out that another DNS server (usually AdGuard) must be stopped — Pi-hole cannot share that address
+- Scan host processes for AdGuard/dnsmasq names and probe AdGuard’s admin UI more aggressively when Supervisor cannot list add-ons
+
 ## 1.10.7
 
 - When port 53 is busy **only on localhost** (`127.0.0.1` / `::1`, typical AdGuard), auto-bind Pi-hole DNS to the LAN interface (`BIND`) so blocking can start without stopping the peer

@@ -524,45 +524,77 @@ def _supervisor_api_bases() -> list[str]:
     return ["http://172.30.32.2", "http://supervisor", "http://hassio"]
 
 
+_SUPERVISOR_LAST_ERROR = ""
+
+
 def _supervisor_get_json(path: str) -> Any | None:
+    """GET a Supervisor API path; returns parsed JSON or None on failure."""
+    global _SUPERVISOR_LAST_ERROR
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
     if not token:
+        _SUPERVISOR_LAST_ERROR = "SUPERVISOR_TOKEN missing"
         log.warning("SUPERVISOR_TOKEN missing; cannot identify peer DNS add-ons")
         return None
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "X-Supervisor-Token": token,
-        "Accept": "application/json",
-    }
+    header_sets = (
+        {
+            "Authorization": f"Bearer {token}",
+            "X-Supervisor-Token": token,
+            "Accept": "application/json",
+        },
+        {
+            "X-Hassio-Key": token,
+            "Accept": "application/json",
+        },
+    )
     errors: list[str] = []
     for base in _supervisor_api_bases():
-        url = f"{base.rstrip('/')}/{path.lstrip('/')}"
-        request = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(request, timeout=3) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = ""
+        for headers in header_sets:
+            url = f"{base.rstrip('/')}/{path.lstrip('/')}"
+            request = urllib.request.Request(url, headers=headers, method="GET")
             try:
-                body = exc.read().decode("utf-8", errors="replace")[:200]
-            except Exception:  # noqa: BLE001
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
                 body = ""
-            errors.append(f"{url}: HTTP {exc.code} {body}")
-            # 401/403 mean role/token issue — no point trying other bases the same way.
-            if exc.code in {401, 403}:
-                break
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{url}: {exc}")
-            continue
+                try:
+                    body = exc.read().decode("utf-8", errors="replace")[:200]
+                except Exception:  # noqa: BLE001
+                    body = ""
+                errors.append(f"{url}: HTTP {exc.code} {body}")
+                if exc.code in {401, 403}:
+                    continue
+                continue
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{url}: {exc}")
+                continue
+            if isinstance(payload, dict) and payload.get("result") == "error":
+                msg = str(payload.get("message") or payload)
+                errors.append(f"{url}: {msg}")
+                _SUPERVISOR_LAST_ERROR = msg
+                continue
+            _SUPERVISOR_LAST_ERROR = ""
+            return payload
     if errors:
-        log.warning("Supervisor GET %s failed: %s", path, "; ".join(errors))
+        _SUPERVISOR_LAST_ERROR = "; ".join(errors)[:300]
+        log.warning("Supervisor GET %s failed: %s", path, _SUPERVISOR_LAST_ERROR)
     return None
 
 
 def _probe_localhost_dns_ui() -> list[dict[str, Any]]:
-    """Best-effort fingerprint of common DNS admin UIs on localhost."""
+    """Best-effort fingerprint of common DNS admin UIs on localhost / LAN."""
+    lan_ips = []
+    try:
+        lan_ips = detect_host_ips()[:1]
+    except Exception:  # noqa: BLE001
+        lan_ips = []
+    adguard_urls = [
+        "http://127.0.0.1:3000/",
+        "http://127.0.0.1:80/",
+        *[f"http://{ip}:3000/" for ip in lan_ips],
+        *[f"http://{ip}:80/" for ip in lan_ips],
+    ]
     probes = (
-        ("AdGuard Home", ("http://127.0.0.1:3000/", "http://127.0.0.1:80/")),
+        ("AdGuard Home", tuple(adguard_urls)),
         ("Technitium DNS", ("http://127.0.0.1:5380/",)),
     )
     found: list[dict[str, Any]] = []
@@ -573,14 +605,31 @@ def _probe_localhost_dns_ui() -> list[dict[str, Any]]:
                 with urllib.request.urlopen(request, timeout=1.5) as response:
                     body = response.read(4096).decode("utf-8", errors="replace").lower()
                     server = (response.headers.get("Server") or "").lower()
+                    status = response.status
+            except urllib.error.HTTPError as exc:
+                # Auth walls still prove the admin UI is present.
+                body = ""
+                try:
+                    body = exc.read(2048).decode("utf-8", errors="replace").lower()
+                except Exception:  # noqa: BLE001
+                    body = ""
+                server = (exc.headers.get("Server") if exc.headers else "") or ""
+                server = server.lower()
+                status = exc.code
             except Exception:  # noqa: BLE001
                 continue
             hit = False
             if "adguard" in label.lower() and (
-                "adguard" in body or "adguard" in server or "control.html" in body
+                "adguard" in body
+                or "adguard" in server
+                or "control.html" in body
+                or (":3000" in url and status in {200, 301, 302, 401, 403})
             ):
+                # Port 3000 answering is a strong AdGuard signal on HA hosts.
                 hit = True
-            if "technitium" in label.lower() and "technitium" in body:
+            if "technitium" in label.lower() and (
+                "technitium" in body or (":5380" in url and status in {200, 401, 403})
+            ):
                 hit = True
             if hit:
                 found.append(
@@ -589,10 +638,75 @@ def _probe_localhost_dns_ui() -> list[dict[str, Any]]:
                         "pid": None,
                         "comm": label,
                         "cmdline": url,
-                        "detail": f"{label} admin UI responds at {url}",
+                        "detail": (
+                            f"{label} appears to be running (admin UI at {url}). "
+                            "Stop it under Settings → Add-ons, then restart Pi-hole"
+                        ),
                     }
                 )
                 break
+    return found
+
+
+def _scan_dns_like_processes() -> list[dict[str, Any]]:
+    """Scan /proc for well-known DNS server process names (needs host_pid)."""
+    keywords = (
+        "adguard",
+        "dnsmasq",
+        "unbound",
+        "coredns",
+        "systemd-resolve",
+        "blocky",
+        "technitium",
+        "named",
+        "bind9",
+    )
+    found: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        try:
+            cmdline = (
+                (entry / "cmdline")
+                .read_bytes()
+                .replace(b"\x00", b" ")
+                .decode("utf-8", errors="replace")
+                .strip()[:180]
+            )
+        except OSError:
+            cmdline = ""
+        blob = f"{comm} {cmdline}".lower()
+        if "pihole" in blob or "ftl" == comm.lower():
+            continue
+        if not any(key in blob for key in keywords):
+            continue
+        if pid in seen:
+            continue
+        seen.add(pid)
+        label = comm or "dns-process"
+        found.append(
+            {
+                "proto": "proc",
+                "pid": pid,
+                "comm": comm,
+                "cmdline": cmdline,
+                "detail": (
+                    f"process {label} (pid={pid})"
+                    + (f" — {cmdline}" if cmdline else "")
+                    + ". Stop this DNS service, then restart Pi-hole"
+                ),
+            }
+        )
     return found
 
 
@@ -718,8 +832,11 @@ def _humanize_port_owner_summary(
     loopback_only = bool(addresses) and all(_is_loopback_addr(addr) for addr in addresses)
     has_resolved_stub = any(addr in {"127.0.0.53", "127.0.0.54"} for addr in addresses)
 
+    lan_addrs = [a for a in addresses if a and not _is_loopback_addr(a) and a != "unparsed"]
+    has_lan = bool(lan_addrs)
+
     if not parts:
-        if has_resolved_stub:
+        if has_resolved_stub and not has_lan:
             parts.append(
                 "systemd-resolved stub resolver on 127.0.0.53 "
                 "(disable DNSStubListener or stop systemd-resolved on the host)"
@@ -732,18 +849,34 @@ def _humanize_port_owner_summary(
                 "Open Settings → Add-ons, stop AdGuard (or another DNS add-on), "
                 "then restart Pi-hole"
             )
+        elif has_lan:
+            lan_list = ", ".join(f"{a}:{port}" for a in lan_addrs)
+            parts.append(
+                f"another DNS server already owns your LAN address ({lan_list}) — "
+                "almost always AdGuard Home. Open Settings → Add-ons, stop AdGuard "
+                "(you cannot run two DNS servers on the same host IP), then restart Pi-hole"
+            )
         elif addresses:
             parts.append(
                 "listeners on "
                 + ", ".join(f"{a}:{port}" for a in addresses)
-                + " (process name not visible from this add-on namespace — "
-                "check AdGuard, dnsmasq, or another DNS add-on)"
+                + " (process name not visible — check AdGuard under Settings → Add-ons)"
             )
         else:
             parts.append(
-                "another DNS service on this host (process not visible from this add-on — "
-                "check AdGuard, dnsmasq, systemd-resolved)"
+                "another DNS service on this host (process not visible — "
+                "check AdGuard under Settings → Add-ons)"
             )
+        if _SUPERVISOR_LAST_ERROR and "addons" in _SUPERVISOR_LAST_ERROR.lower():
+            parts.append(
+                "tip: rebuild/reinstall Pi-hole so Supervisor grants the manager role "
+                "and can name the conflicting add-on"
+            )
+    elif has_lan and not any("AdGuard" in p or "adguard" in p.lower() or "Stop" in p for p in parts):
+        lan_list = ", ".join(f"{a}:{port}" for a in lan_addrs)
+        parts.append(
+            f"LAN {lan_list} is taken — stop the other DNS add-on before Pi-hole can start"
+        )
     elif loopback_only and not any("AdGuard" in p or "adguard" in p.lower() for p in parts):
         # Named add-on missing but bind pattern matches AdGuard/localhost stub.
         if has_resolved_stub:
@@ -774,10 +907,25 @@ def describe_port_owners(port: int = DNS_PORT) -> dict[str, Any]:
         for owner in _parse_proc_net_listeners(port):
             if owner.get("comm") or not socket_owners:
                 socket_owners.append(owner)
+    # host_pid: scan for AdGuardHome/dnsmasq even when socket→pid mapping fails.
+    proc_hits = _scan_dns_like_processes()
+    for hit in proc_hits:
+        if hit.get("detail") and hit["detail"] not in {o.get("detail") for o in socket_owners}:
+            socket_owners.append(hit)
     addon_conflicts = _supervisor_dns_conflicts(port)
+    if not addon_conflicts and not any(
+        "adguard" in str(o.get("comm", "")).lower() or "AdGuard" in str(o.get("detail", ""))
+        for o in socket_owners
+    ):
+        addon_conflicts = _probe_localhost_dns_ui()
     summary = _humanize_port_owner_summary(port, socket_owners, addon_conflicts)
     owners = list(socket_owners) + list(addon_conflicts)
-    return {"port": port, "owners": owners, "summary": summary}
+    return {
+        "port": port,
+        "owners": owners,
+        "summary": summary,
+        "supervisor_error": _SUPERVISOR_LAST_ERROR or None,
+    }
 
 
 def _dns_answers_on(host: str, port: int = DNS_PORT) -> bool:
